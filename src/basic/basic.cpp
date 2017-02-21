@@ -23,7 +23,7 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #include "statistics.h"
 #include "sequence.h"
 
-const char* Const::version_string = "0.8.18";
+const char* Const::version_string = "0.8.36";
 const char* Const::program_name = "diamond";
 const char* Const::id_delimiters = " \a\b\f\n\r\t\v";
 
@@ -72,7 +72,11 @@ unsigned Align_mode::from_command(unsigned command)
 
 Align_mode align_mode (Align_mode::blastp);
 
-const Reduction Reduction::reduction("KREDQN C G H M F Y ILV W P STA");
+Reduction Reduction::reduction("KREDQN C G H M F Y ILV W P STA");
+//Reduction Reduction::reduction("A KR EDNQ C G H ILVM FYW P ST"); // murphy.10
+//const Reduction Reduction::reduction("G D N AEFIKLMQRVW Y H C T S P"); // gmbr.10
+//const Reduction Reduction::reduction("EKQR IV LY F AM W HT C DNS"); // dssp.10
+//const Reduction Reduction::reduction("K R E D Q N C G H M F Y I L V W P S T A");
 
 Statistics statistics;
 
@@ -94,7 +98,79 @@ const char* shape_codes[][Const::max_shapes] = {
 	"1101001001000010000111",
 	"1101000100100000100000111",
 	"1110001000100000001010011" },
-	//{ "11111", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, }
+	{
+		"11001011",		// 16x5
+		"101010011",
+	"100110101",
+	"1110000101",
+	"110000100011",
+	"1010010000011",
+	"1100000010011",
+	"11010000000101",
+	"100100010000101",
+	"1010000000000100011",
+	"1010000001000001001",
+	"1100000000100001001",
+	"10100010000000100001",
+	"10010001000000000101",
+	"110000000100000010001",
+	"10010000100000000000011" },
+
+	{
+		"11101011", // 16x6
+"110100111",
+"11001000111",
+"1100001001011",
+"10101000010011",
+"101001000001011",
+"1100010000001011",
+"11010000010001001",
+"100100100000010101",
+"101001000100000101",
+"1010001000010000101",
+"11001000000100000011",
+"101000001000000010011",
+"1100010000000100000101",
+"11000001000000000100011",
+"101000010000000000010011"
+	},
+
+	{ "1110010111", // 16x7
+	"11001101011",
+	"1101001000111",
+	"11100010010011",
+	"110100101000011",
+	"1100100010010101",
+	"1101010000010011",
+	"1100100000101011",
+	"11010001000010011",
+	"10101000010001011",
+	"11000010010000111",
+	"11100000001000001011",
+	"110000100010000001101",
+	"11010000100000000010011",
+	"10100010000010000001011",
+	"110001000000010001000101"
+
+	},
+	{
+		"101011",		// 16x4
+		"110011",
+	"110000101",
+	"1001000011",
+	"10010000011",
+	"110000010001",
+	"1100000001001",
+	"10001000000101",
+	"10100000100001",
+	"100100000000011",
+	"101000000010001",
+	"1010000001000001",
+	"1000010000001001",
+	"101000000000000011",
+	"100010000000000000101",
+	"1000100000000000100001"
+	}
 };
 
 shape_config shapes;
@@ -102,71 +178,65 @@ unsigned shape_from, shape_to;
 
 const Letter Translator::reverseLetter[5] = { 3, 2, 1, 0, 4 };
 
-const Letter Translator::lookup[5][5][5] = {
-	{ { 11,2,11,2,23 },
-	{ 16,16,16,16,16 },
-	{ 1,15,1,15,23 },
-	{ 9,9,12,9,23 },
-	{ 23,23,23,23,23 },
-	},
-	{ { 5,8,5,8,23 },
-	{ 14,14,14,14,14 },
-	{ 1,1,1,1,1 },
-	{ 10,10,10,10,10 },
-	{ 23,23,23,23,23 },
-	},
-	{ { 6,3,6,3,23 },
-	{ 0,0,0,0,0 },
-	{ 7,7,7,7,7 },
-	{ 19,19,19,19,19 },
-	{ 23,23,23,23,23 },
-	},
-	{ { 24,18,24,18,23 },
-	{ 15,15,15,15,15 },
-	{ 24,4,17,4,23 },
-	{ 10,13,10,13,23 },
-	{ 23,23,23,23,23 },
-	},
-	{ { 23,23,23,23,23 },
-	{ 23,23,23,23,23 },
-	{ 23,23,23,23,23 },
-	{ 23,23,23,23,23 },
-	{ 23,23,23,23,23 },
-	} };
-
-const Letter Translator::lookupReverse[5][5][5] = {
-	{ { 13,10,13,10,23 },
-	{ 4,17,4,24,23 },
-	{ 15,15,15,15,15 },
-	{ 18,24,18,24,23 },
-	{ 23,23,23,23,23 },
-	},
-	{ { 19,19,19,19,19 },
-	{ 7,7,7,7,7 },
-	{ 0,0,0,0,0 },
-	{ 3,6,3,6,23 },
-	{ 23,23,23,23,23 },
-	},
-	{ { 10,10,10,10,10 },
-	{ 1,1,1,1,1 },
-	{ 14,14,14,14,14 },
-	{ 8,5,8,5,23 },
-	{ 23,23,23,23,23 },
-	},
-	{ { 9,12,9,9,23 },
-	{ 15,1,15,1,23 },
-	{ 16,16,16,16,16 },
-	{ 2,11,2,11,23 },
-	{ 23,23,23,23,23 },
-	},
-	{ { 23,23,23,23,23 },
-	{ 23,23,23,23,23 },
-	{ 23,23,23,23,23 },
-	{ 23,23,23,23,23 },
-	{ 23,23,23,23,23 },
-	} };
+Letter Translator::lookup[5][5][5];
+Letter Translator::lookupReverse[5][5][5];
 
 const Letter Translator::STOP(value_traits.from_char('*'));
+
+const char* Translator::codes[] = {
+	0,
+	"FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG", // 1
+	"FFLLSSSSYY**CCWWLLLLPPPPHHQQRRRRIIMMTTTTNNKKSS**VVVVAAAADDEEGGGG", // 2
+	"FFLLSSSSYY**CCWWTTTTPPPPHHQQRRRRIIMMTTTTNNKKSSRRVVVVAAAADDEEGGGG", // 3
+	"FFLLSSSSYY**CCWWLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG", // 4
+	"FFLLSSSSYY**CCWWLLLLPPPPHHQQRRRRIIMMTTTTNNKKSSSSVVVVAAAADDEEGGGG", // 5
+	"FFLLSSSSYYQQCC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG", // 6
+	0,
+	0,
+	"FFLLSSSSYY**CCWWLLLLPPPPHHQQRRRRIIIMTTTTNNNKSSSSVVVVAAAADDEEGGGG", // 9
+	"FFLLSSSSYY**CCCWLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG", // 10
+	"FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG", // 11
+	"FFLLSSSSYY**CC*WLLLSPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG", // 12
+	"FFLLSSSSYY**CCWWLLLLPPPPHHQQRRRRIIMMTTTTNNKKSSGGVVVVAAAADDEEGGGG", // 13
+	"FFLLSSSSYYY*CCWWLLLLPPPPHHQQRRRRIIIMTTTTNNNKSSSSVVVVAAAADDEEGGGG", // 14
+	0,
+	"FFLLSSSSYY*LCC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG", // 16
+	0,
+	0,
+	0,
+	0,
+	"FFLLSSSSYY**CCWWLLLLPPPPHHQQRRRRIIMMTTTTNNNKSSSSVVVVAAAADDEEGGGG", // 21
+	"FFLLSS*SYY*LCC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG", // 22
+	"FF*LSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG", // 23
+	"FFLLSSSSYY**CCWWLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSSKVVVVAAAADDEEGGGG", // 24
+	"FFLLSSSSYY**CCGWLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG", // 25
+	"FFLLSSSSYY**CC*WLLLAPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG" // 26
+};
+
+void Translator::init(unsigned id)
+{
+	static const unsigned idx[] = { 2, 1, 3, 0 };
+	if (id >= sizeof(codes) / sizeof(codes[0]) || codes[id] == 0)
+		throw std::runtime_error("Invalid genetic code id.");
+	for (unsigned i = 0; i < 5; ++i)
+		for (unsigned j = 0; j < 5; ++j)
+			for (unsigned k = 0; k < 5; ++k)
+				if (i == 4 || j == 4 || k == 4) {
+					lookup[i][j][k] = value_traits.mask_char;
+					lookupReverse[i][j][k] = value_traits.mask_char;
+				}
+				else {
+					lookup[i][j][k] = value_traits.from_char(codes[id][(int)idx[i] * 16 + (int)idx[j] * 4 + (int)idx[k]]);
+					lookupReverse[i][j][k] = value_traits.from_char(codes[id][idx[(int)reverseLetter[i]] * 16 + idx[(int)reverseLetter[j]] * 4 + idx[(int)reverseLetter[k]]]);
+				}
+	for (unsigned i = 0; i < 4; ++i)
+		for (unsigned j = 0; j < 4; ++j) {
+			if (equal(lookup[i][j], 4))
+				lookup[i][j][4] = lookup[i][j][0];
+			if (equal(lookupReverse[i][j], 4))
+				lookupReverse[i][j][4] = lookupReverse[i][j][0];
+		}
+}
 
 vector<Letter> sequence::from_string(const char* str)
 {
@@ -174,4 +244,27 @@ vector<Letter> sequence::from_string(const char* str)
 	while (*str)
 		seq.push_back(value_traits.from_char(*(str++)));
 	return seq;
+}
+
+void Seed::enum_neighborhood(unsigned pos, int treshold, vector<Seed>& out, int score)
+{
+	Letter l = data_[pos];
+	score -= score_matrix(l, l);
+	for (unsigned i = 0; i < 20; ++i) {
+		int new_score = score + score_matrix(l, i);
+		data_[pos] = i;
+		if (new_score >= treshold) {
+			if (pos < config.seed_weight - 1)
+				enum_neighborhood(pos + 1, treshold, out, new_score);
+			else
+				out.push_back(*this);
+		}
+	}
+	data_[pos] = l;
+}
+
+void Seed::enum_neighborhood(int treshold, vector<Seed>& out)
+{
+	out.clear();
+	enum_neighborhood(0, treshold, out, score(*this));
 }

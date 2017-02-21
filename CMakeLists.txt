@@ -19,7 +19,7 @@ find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 
 set(CMAKE_BUILD_TYPE Release)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-uninitialized -Wno-deprecated-declarations")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-uninitialized -Wno-deprecated-declarations -Wno-ignored-attributes -Wno-unused-variable")
 
 include_directories(
   "${CMAKE_SOURCE_DIR}/src"
@@ -51,8 +51,6 @@ add_executable(diamond src/run/main.cpp
   src/util/Timer.cpp
   src/basic/basic.cpp
   src/dp/floating_sw.cpp
-  src/align/align_sequence_anchored.cpp
-  src/align/align_sequence_simple.cpp
   src/basic/hssp.cpp
   src/dp/ungapped_align.cpp
   src/run/tools.cpp
@@ -67,6 +65,20 @@ add_executable(diamond src/run/main.cpp
   src/data/frequent_seeds.cpp
   src/align/query_mapper.cpp
   src/align/align_target.cpp
+  src/output/blast_tab_format.cpp
+  src/dp/padded_banded_sw.cpp
+  src/dp/needleman_wunsch.cpp
+  src/output/blast_pairwise_format.cpp
+  src/extra/roc.cpp
+  src/dp/comp_based_stats.cpp
+  src/extra/model_sim.cpp
+  src/run/double_indexed.cpp
+  src/search/search_query.cpp
+  src/search/collision.cpp
+  src/output/sam_format.cpp
+  src/align/align.cpp
+  src/search/setup.cpp
+  src/extra/opt.cpp
 )
 
 target_link_libraries(diamond ${ZLIB_LIBRARY} ${CMAKE_THREAD_LIBS_INIT})

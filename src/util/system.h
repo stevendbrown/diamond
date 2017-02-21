@@ -21,6 +21,8 @@ Author: Benjamin Buchfink
 #ifndef SYSTEM_H_
 #define SYSTEM_H_
 
+#include <stdexcept>
+
 #ifdef _WIN32
 #define cpuid(info,x)    __cpuidex(info,x,0)
 #else
@@ -37,24 +39,6 @@ inline void cpuid(int CPUInfo[4],int InfoType) {
 #endif
 
 #ifdef _MSC_VER
-#define __SSSE3__
-#endif
-
-inline bool check_SSSE3()
-{
-#ifdef __SSSE3__
-    int info[4];
-    cpuid(info, 0);
-    int nids = info[0];
-    if (nids >= 1) {
-    	cpuid(info, 1);
-    	return (info[2] & (1<<9)) != 0;
-    }
-#endif
-    return false;
-}
-
-#ifdef _MSC_VER
 
 #define PACKED_ATTRIBUTE
 #define FTELL(x) _ftelli64(x)
@@ -65,6 +49,32 @@ inline bool check_SSSE3()
 #define PACKED_ATTRIBUTE __attribute__((packed))
 #define FTELL(x) ftell(x)
 #define FSEEK(x,y,z) fseek(x,y,z)
+
+#endif
+
+#ifndef _MSC_VER
+
+#include <sys/resource.h>
+
+inline void set_max_open_files(unsigned n)
+{
+	rlimit rlp;
+	if (getrlimit(RLIMIT_NOFILE, &rlp) != 0)
+		throw std::runtime_error("Error executing getrlimit.");
+	if (rlp.rlim_max < n)
+		throw std::runtime_error("Open files hard limit is too low. Set lower value for --bin parameter.");
+	if (rlp.rlim_cur < n) {
+		rlp.rlim_cur = n;
+		if (setrlimit(RLIMIT_NOFILE, &rlp) != 0)
+			throw std::runtime_error("Error executing setrlimit.");
+	}
+	//std::cout << "Soft limit = " << rlp.rlim_cur << " Hard limit = " << rlp.rlim_max << std::endl;
+}
+
+#else
+
+inline void set_max_open_files(unsigned n)
+{}
 
 #endif
 

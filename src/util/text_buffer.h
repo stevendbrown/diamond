@@ -134,8 +134,8 @@ struct Text_buffer
 		*(ptr_++) = c;
 		return *this;
 	}
-
-	Text_buffer& operator<<(uint32_t x)
+	
+	Text_buffer& operator<<(unsigned int x)
 	{
 		//write(x);
 		reserve(16);
@@ -151,10 +151,17 @@ struct Text_buffer
 		return *this;
 	}
 
-	Text_buffer& operator<<(size_t x)
+	Text_buffer& operator<<(unsigned long x)
 	{
 		reserve(32);
-		ptr_ += sprintf(ptr_, "%llu", (unsigned long long)x);
+		ptr_ += sprintf(ptr_, "%lu", x);
+		return *this;
+	}
+	
+	Text_buffer& operator<<(unsigned long long x)
+	{
+		reserve(32);
+		ptr_ += sprintf(ptr_, "%llu", x);
 		return *this;
 	}
 
@@ -176,6 +183,13 @@ struct Text_buffer
 	{
 		reserve(32);
 		ptr_ += sprintf(ptr_, "%.1le", x);
+		return *this;
+	}
+
+	Text_buffer& print(unsigned i, unsigned width)
+	{
+		reserve(16);
+		ptr_ += sprintf(ptr_, "%4u", i);
 		return *this;
 	}
 

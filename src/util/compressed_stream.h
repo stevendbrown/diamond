@@ -21,20 +21,32 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 
 #include <string>
 #include <memory>
-#include "zstr.hpp"
+#include <zlib.h>
 #include "binary_file.h"
+#include "util.h"
 
 using std::string;
 using std::auto_ptr;
 
-struct Compressed_istream
+struct Stream_read_exception : public std::runtime_error
+{
+	Stream_read_exception(size_t line_count, const char *msg) :
+		runtime_error(string("Error reading input stream at line ") + to_string(line_count) + ": " + msg)
+	{}
+};
+
+struct Compressed_istream : public Input_stream
 {
 	Compressed_istream(const string &file_name);
-	size_t read(char *ptr, size_t count);
-	void putback(char c);
+	virtual size_t read_bytes(char *ptr, size_t count);
+	virtual void close();
+	static Input_stream* auto_detect(const string &file_name);
 private:
-	const string file_name_;
-	zstr::ifstream s_;
+	z_stream strm;
+	static const size_t chunk_size = 1llu << 20;
+	auto_ptr<char> in, out;
+	size_t read_, total_;
+	bool eos_;
 };
 
 struct Compressed_ostream : public Output_stream
@@ -52,6 +64,5 @@ private:
 	z_stream strm;
 	auto_ptr<char> out;
 };
-
 
 #endif

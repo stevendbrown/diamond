@@ -22,6 +22,46 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 
 using std::list;
 
+void Query_mapper::get_prefilter_score(size_t idx)
+{
+	static const int max_dist = 64;
+
+	Target& target = targets[idx];
+	const size_t n = target.end - target.begin;
+	vector<Seed_hit>::iterator hits = seed_hits.begin() + target.begin;
+	std::sort(seed_hits.begin() + target.begin, seed_hits.begin() + target.end, Seed_hit::compare_pos);
+	
+	int max_score = 0;
+	for (unsigned node = 0; node < n; ++node) {
+		Seed_hit& d = hits[node];
+		if (d.ungapped.len == 0)
+			continue;
+		for (int k = node - 1; k >= 0; --k) {
+			const Seed_hit &e = hits[k];
+			if (e.ungapped.len == 0)
+				continue;
+			if (d.ungapped.j - e.ungapped.subject_last() < max_dist) {
+				if (abs(d.ungapped.i - e.ungapped.query_last()) >= max_dist)
+					continue;
+				const int shift = d.ungapped.diag() - e.ungapped.diag();
+				int gap_score = -config.gap_open - abs(shift)*config.gap_extend;
+				const int space = shift > 0 ? d.ungapped.j - e.ungapped.subject_last() : d.ungapped.i - e.ungapped.query_last();
+				int prefix_score;
+				if (space <= 0)
+					prefix_score = std::max(e.prefix_score - (e.ungapped.score - e.ungapped.partial_score(abs(space))) + d.ungapped.score, e.prefix_score + d.ungapped.partial_score(abs(space))) + gap_score;
+				else
+					prefix_score = e.prefix_score + d.ungapped.score + gap_score;
+
+				d.prefix_score = std::max(d.prefix_score, (unsigned)prefix_score);
+			}
+			else
+				break;
+		}
+		max_score = std::max(max_score, (int)d.prefix_score);
+	}
+	target.filter_score = max_score;
+}
+
 bool is_contained(const vector<Seed_hit>::const_iterator &hits, size_t i)
 {
 	for (size_t j = 0; j < i; ++j)
@@ -38,31 +78,85 @@ bool is_contained(const list<Hsp_data> &hsps, const Seed_hit &hit)
 	return false;
 }
 
+pair<int, int> get_diag_range(vector<Seed_hit>::const_iterator begin, vector<Seed_hit>::const_iterator end, unsigned frame)
+{
+	int d_min = std::numeric_limits<int>::max(), d_max = std::numeric_limits<int>::min();
+	for (vector<Seed_hit>::const_iterator i = begin; i < end; ++i) {
+		if (i->frame_ == frame) {
+			const int d = i->diagonal();
+			d_min = std::min(d_min, d);
+			d_max = std::max(d_max, d);
+		}
+	}
+	return pair<int, int>(d_min, d_max);
+}
+
 void Query_mapper::align_target(size_t idx, Statistics &stat)
 {
+	static const int band = 32;
+	typedef float score_t;
 	Target& target = targets[idx];
 	std::sort(seed_hits.begin() + target.begin, seed_hits.begin() + target.end);
 	const size_t n = target.end - target.begin,
 		max_len = query_seq(0).length() + 100 * query_seqs::get().avg_len();
 	size_t aligned_len = 0;
 	const vector<Seed_hit>::const_iterator hits = seed_hits.begin() + target.begin;
+	const sequence subject = ref_seqs::get()[hits[0].subject_];
+	//log_stream << query_ids::get()[query_id].c_str() << endl << ref_ids::get()[hits[0].subject_].c_str() << endl;
+
+	unsigned frame_mask = (1 << align_mode.query_contexts) - 1;
 
 	for (size_t i = 0; i < n; ++i) {
-		if (!is_contained(hits, i) && !is_contained(target.hsps, hits[i])) {
+		const unsigned frame = hits[i].frame_;
+		if ((frame_mask & (1u << frame)) == 0)
+			continue;
+		if (!is_contained(hits, i) && !is_contained(target.hsps, hits[i])) {			
 			target.hsps.push_back(Hsp_data());
-			target.hsps.back().frame = hits[i].frame_;
+			target.hsps.back().frame = frame;
 			uint64_t cell_updates;
-			floating_sw(&query_seq(hits[i].frame_)[hits[i].query_pos_],
-				&ref_seqs::get()[hits[i].subject_][hits[i].subject_pos_],
-				target.hsps.back(),
-				config.read_padding(query_seq(hits[i].frame_).length()),
-				score_matrix.rawscore(config.gapped_xdrop),
-				config.gap_open + config.gap_extend,
-				config.gap_extend,
-				cell_updates,
-				hits[i].query_pos_,
-				hits[i].subject_pos_,
-				Traceback());
+
+			if (false && config.comp_based_stats == 1)
+				floating_sw(&query_seq(frame)[hits[i].query_pos_],
+					&subject[hits[i].subject_pos_],
+					target.hsps.back(),
+					config.read_padding(query_seq(frame).length()),
+					(score_t)score_matrix.rawscore(config.gapped_xdrop),
+					(score_t)(config.gap_open + config.gap_extend),
+					(score_t)config.gap_extend,
+					cell_updates,
+					hits[i].query_pos_,
+					hits[i].subject_pos_,
+					query_cb[frame],
+					Traceback(),
+					score_t());
+			else
+				floating_sw(&query_seq(frame)[hits[i].query_pos_],
+					&subject[hits[i].subject_pos_],
+					target.hsps.back(),
+					config.read_padding(query_seq(frame).length()),
+					score_matrix.rawscore(config.gapped_xdrop),
+					config.gap_open + config.gap_extend,
+					config.gap_extend,
+					cell_updates,
+					hits[i].query_pos_,
+					hits[i].subject_pos_,
+					No_score_correction(),
+					Traceback(),
+					int());
+
+			if (config.comp_based_stats) {
+				const int score = (int)target.hsps.back().score + query_cb[frame](target.hsps.back());
+				target.hsps.back().score = (unsigned)std::max(0, score);
+			}
+
+			if (config.greedy) {
+				vector<Diagonal_segment> sh;
+				sh.push_back(Diagonal_segment(hits[i].query_pos_, hits[i].subject_pos_, 0, 0));
+				Hsp_data hsp;
+				greedy_align2(query_seq(frame), profile[frame], subject, sh, true, hsp);
+				target.hsps.back().filter_score = hsp.score;
+			}
+
 			stat.inc(Statistics::OUT_HITS);
 			if (i > 0)
 				stat.inc(Statistics::SECONDARY_HITS);
@@ -76,8 +170,10 @@ void Query_mapper::align_target(size_t idx, Statistics &stat)
 
 	for (list<Hsp_data>::iterator i = target.hsps.begin(); i != target.hsps.end(); ++i)
 		for (list<Hsp_data>::iterator j = target.hsps.begin(); j != target.hsps.end();)
-			if (j != i && j->is_weakly_enveloped(*i))
+			if (j != i && j->is_weakly_enveloped(*i)) {
+				stat.inc(Statistics::ERASED_HITS);
 				j = target.hsps.erase(j);
+			}
 			else
 				++j;
 
@@ -85,5 +181,6 @@ void Query_mapper::align_target(size_t idx, Statistics &stat)
 		i->set_source_range(i->frame, source_query_len);
 
 	target.hsps.sort();
-	target.filter_score = target.hsps.front().score;
+	if(target.hsps.size() > 0)
+		target.filter_score = target.hsps.front().score;
 }

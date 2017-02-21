@@ -76,6 +76,11 @@ struct Output_stream
 	{
 		if (f_ == 0) throw File_open_exception(file_name_);
 	}
+	void remove()
+	{
+		if (::remove(file_name_.c_str()) != 0)
+			std::cerr << "Warning: Failed to delete file " << file_name_ << std::endl;
+	}
 	virtual void close()
 	{
 		if (f_ && f_ != stdout) {
@@ -130,17 +135,33 @@ struct Input_stream
 
 	Input_stream(const string &file_name):
 		file_name (file_name),
-		f_(fopen(file_name.c_str(), "rb"))
+		line_count(0),
+		f_(fopen(file_name.c_str(), "rb")),		
+		line_buf_used_(0),
+		line_buf_end_(0),
+		putback_line_(false),
+		eof_(false)
 	{
 		if (f_ == 0)
 			throw File_open_exception(file_name);
+	}
+
+	void rewind()
+	{
+		::rewind(f_);
+		line_count = 0;
+		line_buf_used_ = 0;
+		line_buf_end_ = 0;
+		putback_line_ = false;
+		eof_ = false;
+		line.clear();
 	}
 
 	Input_stream(const Output_stream &tmp_file):
 		file_name (tmp_file.file_name_),
 		f_(tmp_file.f_)
 	{
-		rewind(f_);
+		::rewind(f_);
 	}
 
 	void seek(size_t pos)
@@ -155,11 +176,15 @@ struct Input_stream
 			throw std::runtime_error("Error executing seek on file " + file_name);
 	}
 
-	template<class _t>
-	size_t read(_t *ptr, size_t count)
+	bool eof() const
+	{
+		return eof_;
+	}
+
+	virtual size_t read_bytes(char *ptr, size_t count)
 	{
 		size_t n;
-		if ((n = fread(ptr, sizeof(_t), count, f_)) != count) {
+		if ((n = fread(ptr, 1, count, f_)) != count) {
 			if (feof(f_) != 0)
 				return n;
 			else
@@ -169,11 +194,18 @@ struct Input_stream
 	}
 
 	template<class _t>
+	size_t read(_t *ptr, size_t count)
+	{
+		return read_bytes((char*)ptr, count*sizeof(_t)) / sizeof(_t);
+	}
+
+	template<class _t>
 	void read(vector<_t> &v)
 	{
 		size_t size;
 		if (read(&size, 1) != 1)
 			throw File_read_exception(file_name);
+		v.clear();
 		v.resize(size);
 		if (read(v.data(), size) != size)
 			throw File_read_exception(file_name);
@@ -208,7 +240,7 @@ struct Input_stream
 #endif
 	}
 
-	void close()
+	virtual void close()
 	{
 		if (f_) {
 			fclose(f_);
@@ -222,10 +254,57 @@ struct Input_stream
 			throw File_read_exception(file_name);
 	}
 
+	void getline()
+	{
+		if (putback_line_) {
+			putback_line_ = false;
+			++line_count;
+			return;
+		}
+		line.clear();
+		while (true) {
+			const char *p = (const char*)memchr(&line_buf_[line_buf_used_], '\n', line_buf_end_ - line_buf_used_);
+			if (p == 0) {
+				line.append(&line_buf_[line_buf_used_], line_buf_end_ - line_buf_used_);
+				line_buf_end_ = read_bytes(line_buf_, line_buf_size);
+				line_buf_used_ = 0;
+				if (line_buf_end_ == 0) {
+					eof_ = true;
+					++line_count;
+					return;
+				}
+			}
+			else {
+				const size_t n = (p - line_buf_) - line_buf_used_;
+				line.append(&line_buf_[line_buf_used_], n);
+				line_buf_used_ += n + 1;
+				const size_t s = line.length() - 1;
+				if (!line.empty() && line[s] == '\r')
+					line.resize(s);
+				++line_count;
+				return;
+			}
+		}
+	}
+
+	void putback_line()
+	{
+		putback_line_ = true;
+		--line_count;
+	}
+
 	string file_name;
+	string line;
+	size_t line_count;
 	
-private:
+protected:
+
+	enum { line_buf_size = 256 };
+
 	FILE *f_;
+	char line_buf_[line_buf_size];
+	size_t line_buf_used_, line_buf_end_;
+	bool putback_line_, eof_;
 
 };
 

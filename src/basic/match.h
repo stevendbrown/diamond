@@ -40,25 +40,46 @@ inline interval normalized_range(unsigned pos, int len, Strand strand)
 
 struct Diagonal_segment
 {
-	Diagonal_segment()
+	Diagonal_segment():
+		len(0)
 	{}
-	Diagonal_segment(unsigned query_pos, unsigned subject_pos, unsigned len, unsigned score):
-		query_pos(query_pos),
-		subject_pos(subject_pos),
+	Diagonal_segment(int query_pos, int subject_pos, int len, int score):
+		i(query_pos),
+		j(subject_pos),
 		len(len),
 		score (score)
 	{}
+	bool empty() const
+	{
+		return len == 0;
+	}
 	interval query_range() const
 	{
-		return interval(query_pos, query_pos + len);
+		return interval(i, i + len);
 	}
 	interval subject_range() const
 	{
-		return interval(subject_pos, subject_pos + len);
+		return interval(j, j + len);
+	}
+	int subject_last() const
+	{
+		return j + len - 1;
+	}
+	int query_last() const
+	{
+		return i + len - 1;
+	}
+	int subject_end() const
+	{
+		return j + len;
+	}
+	int query_end() const
+	{
+		return i + len;
 	}
 	int diag() const
 	{
-		return subject_pos - query_pos;
+		return i - j;
 	}
 	bool is_enveloped(const Diagonal_segment &x) const
 	{
@@ -68,16 +89,41 @@ struct Diagonal_segment
 	}
 	Diagonal_segment transpose() const
 	{
-		return Diagonal_segment(subject_pos, query_pos, len, score);
+		return Diagonal_segment(j, i, len, score);
 	}
-	unsigned query_pos, subject_pos, len, score;
+	int partial_score(int diff) const
+	{
+		return score*std::max(len - diff, 0) / len;
+	}
+	bool operator<=(const Diagonal_segment &rhs) const
+	{
+		return i + len <= rhs.i && j + len <= rhs.j;
+	}
+	static bool cmp_subject(const Diagonal_segment &x, const Diagonal_segment &y)
+	{
+		return x.j < y.j;
+	}
+	static bool cmp_subject_end(const Diagonal_segment &x, const Diagonal_segment &y)
+	{
+		return x.subject_end() < y.subject_end();
+	}
+	static bool cmp_heuristic(const Diagonal_segment &x, const Diagonal_segment &y)
+	{
+		return (x.subject_end() < y.subject_end() && x.j < y.j)
+			|| (y.j - x.j > x.subject_end() - y.subject_end());
+	}
+	friend int abs_shift(const Diagonal_segment &x, const Diagonal_segment &y)
+	{
+		return abs(x.diag() - y.diag());
+	}
+	int i, j, len, score;
 };
 
 struct Intermediate_record;
 
 struct Hsp_data
 {
-	Hsp_data():
+	Hsp_data() :
 		score(0),
 		frame(0),
 		length(0),
@@ -85,9 +131,10 @@ struct Hsp_data
 		mismatches(0),
 		positives(0),
 		gap_openings(0),
-		gaps(0)
+		gaps(0),
+		filter_score(0)
 	{}
-	Hsp_data(int score):
+	Hsp_data(int score) :
 		score(unsigned(score)),
 		frame(0),
 		length(0),
@@ -95,7 +142,8 @@ struct Hsp_data
 		mismatches(0),
 		positives(0),
 		gap_openings(0),
-		gaps(0)
+		gaps(0),
+		filter_score(0)
 	{}
 	Hsp_data(const Intermediate_record &r, unsigned query_source_len);
 	struct Iterator
@@ -134,6 +182,13 @@ struct Hsp_data
 		Edit_operation op() const
 		{
 			return ptr_->op();
+		}
+		bool to_next_match()
+		{
+			do {
+				this->operator++();
+			} while (good() && (op() == op_deletion || op() == op_insertion));
+			return good();
 		}
 		unsigned query_pos, subject_pos;
 	protected:
@@ -180,22 +235,28 @@ struct Hsp_data
 	{
 		return (double)query_source_range.length() * 100 / query_source_len;
 	}
+	double subject_cover_percent(unsigned subject_len) const
+	{
+		return (double)subject_range.length() * 100 / subject_len;
+	}
 	bool pass_through(const Diagonal_segment &d) const;
 	bool is_weakly_enveloped(const Hsp_data &j) const;
 	void merge(const Hsp_data &right, const Hsp_data &left, unsigned query_anchor, unsigned subject_anchor);
-	unsigned score, frame, length, identities, mismatches, positives, gap_openings, gaps;
+	unsigned score, frame, length, identities, mismatches, positives, gap_openings, gaps, filter_score;
 	interval query_source_range, query_range, subject_range;
 	Packed_transcript transcript;
 };
 
 struct Hsp_context
 {
-	Hsp_context(Hsp_data& hsp, unsigned query_id, const sequence &query, const char *query_name, unsigned subject_id, const char *subject_name, unsigned subject_len, unsigned hit_num, unsigned hsp_num) :		
+	Hsp_context(Hsp_data& hsp, unsigned query_id, const sequence &query, const sequence &source_query, const char *query_name, unsigned subject_id, unsigned orig_subject_id, const char *subject_name, unsigned subject_len, unsigned hit_num, unsigned hsp_num) :		
 		query(query),
+		source_query(source_query),
 		query_name(query_name),
 		subject_name(subject_name),
 		query_id(query_id),
 		subject_id(subject_id),
+		orig_subject_id(orig_subject_id),
 		subject_len(subject_len),
 		hit_num(hit_num),
 		hsp_num(hsp_num),
@@ -275,6 +336,10 @@ struct Hsp_context
 	{
 		return score_matrix.bitscore(score());
 	}
+	double filter_score() const
+	{
+		return score_matrix.bitscore(hsp_.filter_score);
+	}
 	unsigned frame() const
 	{ return hsp_.frame; }
 	unsigned length() const
@@ -304,9 +369,9 @@ struct Hsp_context
 	Hsp_context& parse();
 	Hsp_context& set_query_source_range(unsigned oriented_query_begin);
 
-	const sequence query;
+	const sequence query, source_query;
 	const char *query_name, *subject_name;
-	const unsigned query_id, subject_id, subject_len, hit_num, hsp_num;
+	const unsigned query_id, subject_id, orig_subject_id, subject_len, hit_num, hsp_num;
 private:	
 	Hsp_data &hsp_;
 };

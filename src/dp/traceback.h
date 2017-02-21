@@ -31,11 +31,11 @@ bool have_vgap(const _matrix &dp,
 {
 	int score = dp(i, j);
 	l = 1;
-	--j;
-	while (dp.in_band(i, j)) {
-		if (score == dp(i, j) - gap_open - (l - 1)*gap_extend)
+	--i;
+	while (i > 0) {
+		if (score == dp(i, j) - gap_open - l*gap_extend)
 			return true;
-		--j;
+		--i;
 		++l;
 	}
 	return false;
@@ -51,69 +51,39 @@ bool have_hgap(const _matrix &dp,
 {
 	int score = dp(i, j);
 	l = 1;
-	--i;
-	while (dp.in_band(i, j)) {
-		if (score == dp(i, j) - gap_open - (l - 1)*gap_extend)
+	--j;
+	while (j > 0) {
+		if (score == dp(i, j) - gap_open - l*gap_extend)
 			return true;
-		--i;
+		--j;
 		++l;
 	}
 	return false;
 }
 
-template<typename _dir, typename _matrix>
-Hsp_data traceback(const Letter *query,
-	const Letter *subject,
-	const _matrix &dp,
-	int gap_open,
-	int gap_extend,
-	int subject_pos,
-	int query_pos,
-	int score,
-	vector<char> &transcript_buf)
+template<typename _matrix>
+int have_diag(const _matrix &dp,
+	int i,
+	int j,
+	const sequence &query,
+	const sequence &subject,
+	bool log)
 {
-	if (i == -1)
-		return local_match(0);
-
-	Hsp_data l;
-	l.score_ = score;
-	Edit_transcript transcript(transcript_buf);
-
-	int gap_len, i = subject_pos, j = query_pos;
-
-	while (dp(i,j) != 0) {
-		const Letter lq = get_dir(query, j, _dir()), ls = mask_critical(get_dir(subject, i, _dir()));
-		const int match_score = score_matrix(lq, ls);
-		//printf("i=%i j=%i score=%i subject=%c query=%c\n",i,j,dp(i, j),Value_traits<_val>::ALPHABET[ls],Value_traits<_val>::ALPHABET[lq]);
+	int l = 0;
+	while (i > 0 && j > 0) {
+		const int match_score = score_matrix(query[i - 1], subject[j - 1]);
 
 		if (dp(i, j) == match_score + dp(i - 1, j - 1)) {
-			if (lq == ls)
-				++l.identities_;
-			else
-				++l.mismatches_;
+			if (log)
+				printf("i=%i j=%i score=%i subject=%c query=%c\n", i, j, dp(i, j), value_traits.alphabet[(int)subject[j - 1]], value_traits.alphabet[(int)query[i - 1]]);
+			++l;
 			--i;
 			--j;
-			++l.len_;
-			transcript_buf.push_back(op_match);
 		}
-		else if (have_hgap(dp, i, j, gap_open, gap_extend, gap_len)) {
-			++l.gap_openings_;
-			l.len_ += gap_len;
-			i -= gap_len;
-			transcript_buf.insert(transcript_buf.end(), gap_len, op_deletion);
-		}
-		else if (have_vgap(dp, i, j, gap_open, gap_extend, gap_len)) {
-			++l.gap_openings_;
-			l.len_ += gap_len;
-			j -= gap_len;
-			transcript_buf.insert(transcript_buf.end(), gap_len, op_insertion);
-		} else
-			throw std::runtime_error("Traceback error.");
+		else
+			break;
 	}
-
-	l.transcript_right_ = transcript.set_end(transcript_buf);
 	return l;
-
 }
 
 #endif

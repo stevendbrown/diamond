@@ -26,13 +26,13 @@ int xdrop_ungapped(const Letter *query, const Letter *subject, unsigned seed_len
 	delta = 0;
 
 	const Letter *q(query - 1), *s(subject - 1);
-	const unsigned window_left = std::max(config.window, (unsigned)Const::seed_anchor) - Const::seed_anchor;
-	while (score - st < config.xdrop
+	const unsigned window_left = std::max(config.window, (unsigned)config.seed_anchor) - config.seed_anchor;
+	while (score - st < config.raw_ungapped_xdrop
 		&& delta < window_left
 		&& *q != '\xff'
 		&& *s != '\xff')
 	{
-		st += score_matrix(*q, mask_critical(*s));
+		st += score_matrix(*q, *s);
 		score = std::max(score, st);
 		--q;
 		--s;
@@ -42,14 +42,14 @@ int xdrop_ungapped(const Letter *query, const Letter *subject, unsigned seed_len
 	q = query + seed_len;
 	s = subject + seed_len;
 	st = score;
-	assert(seed_len >= Const::seed_anchor);
-	const unsigned window_right = std::max(config.window, seed_len - Const::seed_anchor) - (seed_len - Const::seed_anchor);
-	while (score - st < config.xdrop
+	assert(seed_len >= config.seed_anchor);
+	const unsigned window_right = std::max(config.window, seed_len - config.seed_anchor) - (seed_len - config.seed_anchor);
+	while (score - st < config.raw_ungapped_xdrop
 		&& n < window_right
 		&& *q != '\xff'
 		&& *s != '\xff')
 	{
-		st += score_matrix(*q, mask_critical(*s));
+		st += score_matrix(*q, *s);
 		score = std::max(score, st);
 		++q;
 		++s;
@@ -57,7 +57,7 @@ int xdrop_ungapped(const Letter *query, const Letter *subject, unsigned seed_len
 	}
 
 	for (unsigned i = 0; i<seed_len; ++i)
-		score += score_matrix(query[i], mask_critical(subject[i]));
+		score += score_matrix(query[i], subject[i]);
 
 	len = delta + n + seed_len;
 	return score;
@@ -69,11 +69,11 @@ int xdrop_ungapped(const Letter *query, const Letter *subject, unsigned &delta, 
 	delta = 0;
 	
 	const Letter *q(query - 1), *s(subject - 1);
-	while (score - st < config.xdrop
+	while (score - st < config.raw_ungapped_xdrop
 		&& *q != '\xff'
 		&& *s != '\xff')
 	{
-		st += score_matrix(*q, mask_critical(*s));
+		st += score_matrix(*q, *s);
 		if (st > score) {
 			score = st;
 			delta = n;
@@ -88,11 +88,11 @@ int xdrop_ungapped(const Letter *query, const Letter *subject, unsigned &delta, 
 	st = score;
 	n = 1;
 	len = 0;
-	while (score - st < config.xdrop
+	while (score - st < config.raw_ungapped_xdrop
 		&& *q != '\xff'
 		&& *s != '\xff')
 	{
-		st += score_matrix(*q, mask_critical(*s));
+		st += score_matrix(*q, *s);
 		if (st > score) {
 			score = st;
 			len = n;
@@ -102,5 +102,29 @@ int xdrop_ungapped(const Letter *query, const Letter *subject, unsigned &delta, 
 		++n;
 	}
 	len += delta;
+	return score;
+}
+
+int xdrop_ungapped_right(const Letter *query, const Letter *subject, int &len)
+{
+	int score(0), st(0), n = 1;
+	len = 0;
+	
+	const Letter *q = query;
+	const Letter *s = subject;
+	
+	while (score - st < config.raw_ungapped_xdrop
+		&& *q != '\xff'
+		&& *s != '\xff')
+	{
+		st += score_matrix(*q, *s);
+		if (st > score) {
+			score = st;
+			len = n;
+		}
+		++q;
+		++s;
+		++n;
+	}
 	return score;
 }

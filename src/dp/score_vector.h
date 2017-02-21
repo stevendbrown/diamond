@@ -1,5 +1,5 @@
 /****
-Copyright (c) 2014, University of Tuebingen
+Copyright (c) 2014-2016, University of Tuebingen, Benjamin Buchfink
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
@@ -14,17 +14,12 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
 LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-****
-Author: Benjamin Buchfink
 ****/
 
 #ifndef SCORE_VECTOR_H_
 #define SCORE_VECTOR_H_
 
-#include "../util/system.h"
-#ifdef __SSSE3__
-#include <tmmintrin.h>
-#endif
+#include "../util/simd.h"
 
 template<typename _score>
 struct score_traits
@@ -46,13 +41,16 @@ template<typename _score>
 struct score_vector
 { };
 
+#ifdef __SSE2__
+
 template<>
 struct score_vector<uint8_t>
 {
 
 	score_vector()
 	{
-		data_ = _mm_set1_epi8(score_traits<uint8_t>::zero);
+		//data_ = _mm_set1_epi8(score_traits<uint8_t>::zero);
+		data_ = _mm_setzero_si128();
 	}
 
 	explicit score_vector(char x):
@@ -121,6 +119,17 @@ struct score_vector<uint8_t>
 		return *this;
 	}
 
+	score_vector& operator++()
+	{
+		data_ = _mm_adds_epu8(data_, _mm_set(1));
+		return *this;
+	}
+
+	__m128i operator==(const score_vector &rhs) const
+	{
+		return _mm_cmpeq_epi8(data_, rhs.data_);
+	}
+
 	void unbias(const score_vector &bias)
 	{ this->operator -=(bias); }
 
@@ -171,8 +180,34 @@ struct score_vector<uint8_t>
 		return _mm_movemask_epi8(_mm_cmpgt_epi8(data_, rhs.data_));
 	}
 
+	void store(uint8_t *ptr) const
+	{
+		_mm_storeu_si128((__m128i*)ptr, data_);
+	}
+
+	bool operator>(score_vector<uint8_t> cmp) const
+	{
+		const score_vector<uint8_t> s = *this - cmp;
+#ifdef __SSE4_1__
+		return _mm_testz_si128(s.data_, s.data_) == 0;
+#else
+		return _mm_movemask_epi8(_mm_cmpeq_epi8(s.data_, _mm_setzero_si128())) == 0xFFFF;
+#endif
+	}
+
+	friend std::ostream& operator<<(std::ostream &s, score_vector v)
+	{
+		uint8_t x[16];
+		v.store(x);
+		for (unsigned i = 0; i < 16; ++i)
+			printf("%3i ", (int)x[i]);
+		return s;
+	}
+
 	__m128i data_;
 
 };
+
+#endif
 
 #endif /* SCORE_VECTOR_H_ */

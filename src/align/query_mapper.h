@@ -26,6 +26,7 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #include "../search/trace_pt_buffer.h"
 #include "../data/queries.h"
 #include "../util/ptr_vector.h"
+#include "../dp/dp.h"
 
 using std::vector;
 using std::pair;
@@ -40,18 +41,24 @@ struct Seed_hit
 		subject_(subject),
 		subject_pos_(subject_pos),
 		query_pos_(query_pos),
-		ungapped(ungapped)
+		ungapped(ungapped),
+		prefix_score(ungapped.score)
 	{ }
 	int diagonal() const
 	{
-		return (int)subject_pos_ - (int)query_pos_;
+		return (int)query_pos_ - (int)subject_pos_;
 	}
 	bool operator<(const Seed_hit &rhs) const
 	{
 		return ungapped.score > rhs.ungapped.score;
 	}
+	static bool compare_pos(const Seed_hit &x, const Seed_hit &y)
+	{
+		return Diagonal_segment::cmp_subject_end(x.ungapped, y.ungapped);
+	}
 	unsigned frame_, subject_, subject_pos_, query_pos_;
 	Diagonal_segment ungapped;
+	unsigned prefix_score;
 };
 
 struct Target
@@ -74,8 +81,9 @@ struct Query_mapper
 {
 	Query_mapper();
 	void init();
+	void get_prefilter_score(size_t idx);
 	void align_target(size_t idx, Statistics &stat);
-	void generate_output(Text_buffer &buffer, Statistics &stat);
+	bool generate_output(Text_buffer &buffer, Statistics &stat);
 	size_t n_targets() const
 	{
 		return targets.size();
@@ -93,12 +101,19 @@ private:
 	{
 		return query_seqs::get()[query_id*align_mode.query_contexts + frame];
 	}
+	sequence query_source_seq() const
+	{
+		return align_mode.query_translated ? query_source_seqs::get()[query_id] : query_seqs::get()[query_id];
+	}
 	void load_targets();
 	void rank_targets();
 
-	unsigned source_query_len;
+	unsigned source_query_len, unaligned_from;
 	vector<Seed_hit> seed_hits;
 	Ptr_vector<Target> targets;
+	vector<Bias_correction> query_cb;
+	vector<Long_score_profile> profile;
+	
 };
 
 #endif

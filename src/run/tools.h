@@ -22,5 +22,10 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 void get_seq();
 void benchmark_sw();
 void random_seqs();
+void sort_file();
+void roc();
+void db_stat();
+void model_sim();
+void match_file_stat();
 
 #endif

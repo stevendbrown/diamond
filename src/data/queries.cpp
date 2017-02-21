@@ -23,3 +23,20 @@ Sequence_set* query_source_seqs::data_ = 0;
 Sequence_set* query_seqs::data_ = 0;
 String_set<0>* query_ids::data_ = 0;
 Partitioned_histogram query_hst;
+vector<bool> query_aligned;
+
+void write_unaligned(Output_stream *file)
+{
+	const size_t n = query_ids::get().get_length();
+	string s;
+	for (size_t i = 0; i < n; ++i) {
+		if (!query_aligned[i]) {
+			std::stringstream ss;
+			ss << '>' << query_ids::get()[i].c_str() << endl;
+			(align_mode.query_translated ? query_source_seqs::get()[i] : query_seqs::get()[i]).print(ss, input_value_traits);
+			ss << endl;
+			s = ss.str();
+			file->write(s.data(), s.length());
+		}
+	}
+}

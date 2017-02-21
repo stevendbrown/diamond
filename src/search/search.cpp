@@ -17,21 +17,15 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 ****/
 
 #include "align_range.h"
+#include "hit_filter.h"
+#include "sse_dist.h"
 
 Trace_pt_buffer* Trace_pt_buffer::instance;
-const Reduction Halfbyte_finger_print::reduction("KR E D Q N C G H LM FY VI W P S T A");
-TLS_PTR vector<sequence>* hit_filter::subjects_ptr;
+
+TLS_PTR vector<Finger_print> *Seed_filter::vq_ptr, *Seed_filter::vs_ptr;
+TLS_PTR vector<Stage1_hit> *Seed_filter::hits_ptr;
 
 const unsigned tile_size[] = { 1024, 128 };
-
-struct Range_ref
-{
-	Range_ref(vector<Finger_print>::const_iterator q_begin, vector<Finger_print>::const_iterator s_begin):
-		q_begin(q_begin),
-		s_begin(s_begin)
-	{}
-	const vector<Finger_print>::const_iterator q_begin, s_begin;
-};
 
 #define FAST_COMPARE2(q, s, stats, q_ref, s_ref, q_offset, s_offset, hits) if (q.match(s) >= config.min_identities) stats.inc(Statistics::TENTATIVE_MATCHES1)
 #define FAST_COMPARE(q, s, stats, q_ref, s_ref, q_offset, s_offset, hits) if (q.match(s) >= config.min_identities) hits.push_back(Stage1_hit(q_ref, q_offset, s_ref, s_offset))
@@ -45,7 +39,7 @@ void query_register_search(vector<Finger_print>::const_iterator q,
 {
 	const unsigned q_ref = unsigned(q - ref.q_begin);
 	unsigned s_ref = unsigned(s - ref.s_begin);
-	Finger_print q1 = *(q++), q2 = *(q++), q3 = *(q++), q4 = *(q++), q5=*(q++),q6=*q;
+	Finger_print q1 = *(q++), q2 = *(q++), q3 = *(q++), q4 = *(q++), q5 = *(q++), q6 = *q;
 	const vector<Finger_print>::const_iterator end2 = s_end - (s_end - s) % 4;
 	for (; s < end2; ) {
 		Finger_print s1 = *(s++), s2 = *(s++), s3 = *(s++), s4 = *(s++);
@@ -108,13 +102,11 @@ void inner_search(vector<Finger_print>::const_iterator q,
 	}
 }
 
-void tiled_search(vector<Finger_print>::const_iterator q,
+void Seed_filter::tiled_search(vector<Finger_print>::const_iterator q,
 	vector<Finger_print>::const_iterator q_end,
 	vector<Finger_print>::const_iterator s,
 	vector<Finger_print>::const_iterator s_end,
 	const Range_ref &ref,
-	vector<Stage1_hit> &hits,
-	Statistics &stats,
 	unsigned level)
 {
 	switch (level) {
@@ -122,7 +114,7 @@ void tiled_search(vector<Finger_print>::const_iterator q,
 	case 1:
 		for (; q < q_end; q += std::min(q_end - q, (ptrdiff_t)tile_size[level]))
 			for (vector<Finger_print>::const_iterator s2 = s; s2 < s_end; s2 += std::min(s_end - s2, (ptrdiff_t)tile_size[level]))
-				tiled_search(q, q + std::min(q_end - q, (ptrdiff_t)tile_size[level]), s2, s2 + std::min(s_end - s2, (ptrdiff_t)tile_size[level]), ref, hits, stats, level+1);
+				tiled_search(q, q + std::min(q_end - q, (ptrdiff_t)tile_size[level]), s2, s2 + std::min(s_end - s2, (ptrdiff_t)tile_size[level]), ref, level+1);
 		break;
 	case 2:
 		for (; q < q_end; q += std::min(q_end-q,(ptrdiff_t)6))
@@ -137,39 +129,16 @@ void load_fps(const sorted_list::const_iterator &i, vector<Finger_print> &v, con
 {
 	v.clear();
 	v.reserve(i.n);
-	if (!config.old_freq) {
-		for (unsigned j = 0; j < i.n; ++j)
-			v.push_back(Finger_print(seqs.data(i[j])));
-	} else
-		for (unsigned j = 0; j < i.n && (i.n<=config.hit_cap || i[j] != 0); ++j)
-			v.push_back(Finger_print(seqs.data(i[j]), Masked()));
-}
-
-void load_fps2(const sorted_list::const_iterator &i, vector<Finger_print> &v, const Sequence_set &seqs)
-{
-	v.clear();
-	v.reserve(i.n);
 	for (unsigned j = 0; j < i.n; ++j)
 		v.push_back(Finger_print(seqs.data(i[j])));
 }
 
-void search_seed(const sorted_list::const_iterator &q,
-	const sorted_list::const_iterator &s,
-	Statistics &stats,
-	Trace_pt_buffer::Iterator &out,
-	const unsigned sid)
+void Seed_filter::run(const sorted_list::const_iterator &q, const sorted_list::const_iterator &s)
 {
-	//cout << q.n << ' ' << s.n << endl;
-	/*if (q.n > config.hit_cap)
-		return;*/
-	static TLS_PTR vector<Finger_print> *vq_ptr, *vs_ptr;
-	static TLS_PTR vector<Stage1_hit> *hits_ptr;
-	vector<Finger_print> &vq(TLS::get(vq_ptr)), &vs(TLS::get(vs_ptr));
-	vector<Stage1_hit> &hits(TLS::get(hits_ptr));
 	hits.clear();
-	load_fps2(q, vq, *query_seqs::data_);
+	load_fps(q, vq, *query_seqs::data_);
 	load_fps(s, vs, *ref_seqs::data_);
-	tiled_search(vq.begin(), vq.end(), vs.begin(), vs.end(), Range_ref(vq.begin(), vs.begin()), hits, stats, 0);
+	tiled_search(vq.begin(), vq.end(), vs.begin(), vs.end(), Range_ref(vq.begin(), vs.begin()), 0);
 	std::sort(hits.begin(), hits.end());
 	stats.inc(Statistics::TENTATIVE_MATCHES1, hits.size());
 	stage2_search(q, s, hits, stats, out, sid);

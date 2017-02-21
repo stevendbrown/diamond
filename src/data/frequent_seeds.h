@@ -31,17 +31,18 @@ struct Frequent_seeds
 	bool get(const Letter *pos, unsigned sid) const
 	{
 		Packed_seed seed;
-		shapes[sid].set_seed(seed, pos);
+		if (!shapes[sid].set_seed(seed, pos))
+			return true;
 		return tables_[sid][seed_partition(seed)].contains(seed_partition_offset(seed));
 	}
 
 private:
 
-	static const double hash_table_factor;
+	static const double hash_table_factor;   
 
 	struct Build_context;
 
-	static void compute_sd(Atomic<unsigned> *seedp, const sorted_list *ref_idx, vector<Sd> *out);
+	static void compute_sd(Atomic<unsigned> *seedp, const sorted_list *ref_idx, const sorted_list *query_idx, vector<Sd> *ref_out, vector<Sd> *query_out);
 
 	PHash_set tables_[Const::max_shapes][Const::seedp];
 

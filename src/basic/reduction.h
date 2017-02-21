@@ -47,6 +47,7 @@ struct Reduction
 				map_[(long)value_traits.from_char(ch)] = i;
 				map8_[(long)value_traits.from_char(ch)] = i;
 			}
+		map8_[(long)value_traits.mask_char] = (char)size_;
 	}
 
 	unsigned size() const
@@ -78,12 +79,13 @@ struct Reduction
 
 	static void reduce_seq(const sequence &seq, vector<char> &dst)
 	{
+		dst.clear();
 		dst.resize(seq.length());
 		for (unsigned i = 0; i < seq.length(); ++i)
 			dst[i] = reduction(seq[i]);
 	}
 
-	static const Reduction reduction;
+	static Reduction reduction;
 
 private:
 

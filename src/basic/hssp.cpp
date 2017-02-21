@@ -25,13 +25,13 @@ bool Hsp_data::pass_through(const Diagonal_segment &d) const
 		return false;
 
 	Iterator it = begin();
-	const unsigned subject_end = d.subject_pos + d.len;
+	const unsigned subject_end = d.j + d.len;
 	const unsigned diag = d.diag();
 	while (it.good()) {
-		if (it.subject_pos >= d.subject_pos) {
+		if ((int)it.subject_pos >= d.j) {
 			if (it.subject_pos >= subject_end)
 				return true;
-			if (it.subject_pos-it.query_pos != diag)
+			if (it.query_pos - it.subject_pos != diag)
 				return false;
 		}
 		++it;
@@ -92,6 +92,8 @@ Hsp_context& Hsp_context::parse()
 
 	for (; i.good(); ++i) {
 		++hsp_.length;
+		if (i.query_pos >= query.length())
+			throw std::runtime_error("Query sequence index out of bounds.");
 		switch (i.op()) {
 		case op_match:
 			++hsp_.identities;

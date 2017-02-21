@@ -27,29 +27,92 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #  define SET_BINARY_MODE(file)
 #endif
 
-Compressed_istream::Compressed_istream(const string & file_name) :
-	file_name_(file_name),
-	s_(file_name, std::ios_base::in | std::ios_base::binary)
-{ }
-
-size_t Compressed_istream::read(char * ptr, size_t count)
+Compressed_istream::Compressed_istream(const string &file_name):
+	Input_stream(file_name),
+	in(new char[chunk_size]),
+	out(new char[chunk_size]),
+	read_(0),
+	total_(0),
+	eos_(false)
 {
-	s_.read(ptr, count);
-	const size_t n = s_.gcount();
-	if (n != count) {
-		if (s_.eof())
-			return n;
-		else
-			throw std::runtime_error("Error reading file " + file_name_);
-	}
-	return n;
+	strm.zalloc = Z_NULL;
+	strm.zfree = Z_NULL;
+	strm.opaque = Z_NULL;
+	strm.avail_in = 0;
+	strm.next_in = Z_NULL;
+	strm.avail_out = chunk_size;
+	strm.next_out = (Bytef*)out.get();
+	int ret = inflateInit2(&strm, 15 + 32);
+	if (ret != Z_OK)
+		throw std::runtime_error("Error opening compressed file (inflateInit): " + file_name);
 }
 
-void Compressed_istream::putback(char c)
+size_t Compressed_istream::read_bytes(char *ptr, size_t count)
 {
-	s_.putback(c);
-	if (!s_.good())
-		throw std::runtime_error("Error reading file " + file_name_);
+	size_t n = 0;
+	do {
+		size_t m = std::min(count - n, total_ - read_);
+		memcpy(ptr, &out.get()[read_], m);
+		read_ += m;
+		ptr += m;
+		n += m;
+		if (count == n || eos_)
+			return n;
+
+		if (strm.avail_out > 0 && strm.avail_in == 0) {
+			strm.avail_in = (uInt)Input_stream::read_bytes(in.get(), chunk_size);
+			if (strm.avail_in == 0) {
+				eos_ = true;
+				return n;
+			}
+			strm.next_in = (Bytef*)in.get();
+		}
+
+		strm.avail_out = chunk_size;
+		strm.next_out = (Bytef*)out.get();
+
+		int ret = inflate(&strm, Z_NO_FLUSH);
+		if (ret == Z_STREAM_END) {
+			if(strm.avail_in == 0 && feof(this->f_))
+				eos_ = true;
+			else {
+				int ret = inflateInit2(&strm, 15 + 32);
+				if (ret != Z_OK)
+					throw std::runtime_error("Error initializing compressed stream (inflateInit): " + file_name);
+			}
+		}
+		else if (ret != Z_OK)
+			throw std::runtime_error("Inflate error.");
+
+		read_ = 0;
+		total_ = chunk_size - strm.avail_out;
+	} while (true);
+}
+
+void Compressed_istream::close()
+{
+	inflateEnd(&strm);
+	Input_stream::close();
+}
+
+bool is_gzip_stream(const unsigned char *b)
+{
+	return (b[0] == 0x1F && b[1] == 0x8B)         // gzip header
+		|| (b[0] == 0x78 && (b[1] == 0x01      // zlib header
+			|| b[1] == 0x9C
+			|| b[1] == 0xDA));
+}
+
+Input_stream *Compressed_istream::auto_detect(const string &file_name)
+{
+	unsigned char b[2];
+	Input_stream f(file_name);
+	size_t n = f.read(b, 2);
+	f.close();
+	if (n == 2 && is_gzip_stream(b))
+		return new Compressed_istream(file_name);
+	else
+		return new Input_stream(file_name);
 }
 
 Compressed_ostream::Compressed_ostream(const string &file_name):

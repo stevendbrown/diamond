@@ -31,6 +31,7 @@ using std::vector;
 
 struct sequence
 {
+	struct Reversed {};
 	sequence():
 		len_ (0),
 		clipping_offset_ (0),
@@ -45,6 +46,11 @@ struct sequence
 		len_(data.size()),
 		clipping_offset_(0),
 		data_(data.data())
+	{}
+	sequence(const sequence &seq, int from, int to):
+		len_(to-from+1),
+		clipping_offset_(0),
+		data_(&seq[from])
 	{}
 	size_t length() const
 	{
@@ -84,11 +90,31 @@ struct sequence
 			*(ptr++) = to_char(data_[i]);
 		return len;
 	}
+	Text_buffer& print(Text_buffer &buf, size_t begin, size_t end, const Value_traits& value_traits) const
+	{
+		for (size_t i = begin; i < end; ++i)
+			buf << value_traits.alphabet[(long)data_[i]];
+		return buf;
+	}
+	std::ostream& print(std::ostream &os, const Value_traits &v) const
+	{
+		for (unsigned i = 0; i<len_; ++i)
+			os << v.alphabet[(long)data_[i]];
+		return os;
+	}
+	std::ostream& print(std::ostream &os, const Value_traits &v, Reversed) const
+	{
+		for (int i = (int)len_ - 1; i >= 0; --i)
+			os << v.alphabet[(long)data_[i]];
+		return os;
+	}
+	sequence subseq(int begin, int end) const
+	{
+		return sequence(*this, begin, end - 1);
+	}
 	friend std::ostream& operator<<(std::ostream &os, const sequence &s)
 	{
-		for(unsigned i=0;i<s.len_;++i)
-			os << value_traits.alphabet[(long)s.data_[i]];
-		return os;
+		return s.print(os, value_traits);
 	}
 	friend Text_buffer& operator<<(Text_buffer &buf, const sequence &s)
 	{

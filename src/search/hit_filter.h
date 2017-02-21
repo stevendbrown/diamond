@@ -27,8 +27,11 @@ Author: Benjamin Buchfink
 #include "../dp/smith_waterman.h"
 #include "../basic/sequence.h"
 #include "../data/queries.h"
+#include "../data/reference.h"
 
 using std::vector;
+
+#ifdef __SSE2__
 
 struct hit_filter
 {
@@ -46,10 +49,10 @@ struct hit_filter
 
 	void push(Loc subject, int score)
 	{
-		if(score >= config.min_hit_score)
+		if(score >= config.min_hit_raw_score)
 			push_hit(subject);
 		else
-			subjects_.push_back(ref_seqs::data_->fixed_window_infix(subject+Const::seed_anchor));
+			subjects_.push_back(ref_seqs::data_->fixed_window_infix(subject+ config.seed_anchor));
 	}
 
 	void finish()
@@ -57,14 +60,14 @@ struct hit_filter
 		if(subjects_.size() == 0)
 			return;
 		unsigned left;
-		sequence query (query_seqs::data_->window_infix(q_pos_ + Const::seed_anchor, left));
+		sequence query (query_seqs::data_->window_infix(q_pos_ + config.seed_anchor, left));
 		smith_waterman(query,
 				subjects_,
 				config.hit_band,
 				left,
 				config.gap_open + config.gap_extend,
 				config.gap_extend,
-				config.min_hit_score,
+				config.min_hit_raw_score,
 				*this,
 				uint8_t(),
 				stats_);
@@ -83,7 +86,7 @@ struct hit_filter
 	}
 
 	void operator()(int i, const sequence &seq, int score)
-	{ push_hit(ref_seqs::data_->position(seq.data()+config.window-Const::seed_anchor)); stats_.inc(Statistics::GAPPED_HITS); }
+	{ push_hit(ref_seqs::data_->position(seq.data()+config.window- config.seed_anchor)); stats_.inc(Statistics::GAPPED_HITS); }
 
 private:
 
@@ -96,5 +99,7 @@ private:
 	static TLS_PTR vector<sequence> *subjects_ptr;
 
 };
+
+#endif
 
 #endif /* HIT_FILTER_H_*/

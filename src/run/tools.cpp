@@ -24,6 +24,7 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #include "../data/queries.h"
 #include "../data/load_seqs.h"
 #include "../data/reference.h"
+#include "../extra/match_file.h"
 
 void get_seq()
 {
@@ -39,16 +40,68 @@ void random_seqs()
 	std::set<unsigned> n;
 	const size_t count = atoi(config.seq_no[0].c_str());
 	while (n.size() < count)
-		n.insert((rand()*RAND_MAX+rand()) % ref_seqs::get().get_length());
-	Compressed_ostream out(config.output_file);
+		n.insert((rand()*RAND_MAX + rand()) % ref_seqs::get().get_length());
+	Output_stream out(config.output_file);
 	unsigned j = 0;
 	
 	std::string s;
 	for (std::set<unsigned>::const_iterator i = n.begin(); i != n.end(); ++i) {
 		std::stringstream ss;
-		ss << '>' << j++ << endl << ref_seqs::get()[*i] << endl;
+		ss << '>' << j++ << endl;
+		if (config.reverse)
+			ref_seqs::get()[*i].print(ss, value_traits, sequence::Reversed());
+		else
+			ss << ref_seqs::get()[*i];
+		ss << endl;
 		s = ss.str();
 		out.write(s.data(), s.length());
 	}
 	out.close();
+}
+
+void sort_file()
+{
+	Input_stream f(config.query_file);
+	vector<Pair<unsigned, string> > data;
+	while (f.getline(), !f.eof()) {
+		unsigned query;
+		sscanf(f.line.c_str(), "%u", &query);
+		data.push_back(Pair<unsigned, string>(query, f.line));
+	}
+	std::stable_sort(data.begin(), data.end());
+	for (vector<Pair<unsigned, string> >::const_iterator i = data.begin(); i != data.end(); ++i)
+		cout << i->second << endl;
+	f.close();
+}
+
+void db_stat()
+{
+	Database_file db_file;
+	db_file.load_seqs();
+	cout << "Sequences = " << ref_seqs::get().get_length() << endl;
+
+	size_t letters = 0;
+	vector<size_t> letter_freq(20);
+	for (size_t i = 0; i < ref_seqs::get().get_length(); ++i) {
+		const sequence seq = ref_seqs::get()[i];
+		for (size_t j = 0; j < seq.length(); ++j) {
+			if (seq[j] < 20) {
+				++letters;
+				++letter_freq[(int)seq[j]];
+			}
+		}
+	}
+	cout << "Frequencies = ";
+	for (vector<size_t>::const_iterator i = letter_freq.begin(); i != letter_freq.end(); ++i)
+		cout << (double)*i / letters << ',';
+	cout << endl;
+
+}
+
+void match_file_stat()
+{
+	match_file file(config.match_file1.c_str());
+	blast_match match;
+	while (file.get(match, blast_format()));
+	file.get_subst();
 }

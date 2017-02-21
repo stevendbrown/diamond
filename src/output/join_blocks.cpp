@@ -22,8 +22,6 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #include "../output/daa_write.h"
 #include "output_format.h"
 
-#ifndef ST_JOIN
-
 struct Join_fetcher
 {
 	static void init(const vector<Temp_file> &tmp_file)
@@ -33,6 +31,7 @@ struct Join_fetcher
 			query_ids.push_back(0);
 			files.back().read(&query_ids.back(), 1);
 		}
+		query_last = (unsigned)-1;
 	}
 	static void finish()
 	{
@@ -49,6 +48,7 @@ struct Join_fetcher
 	{
 		unsigned size;
 		files[b].read(&size, 1);
+		buf[b].clear();
 		buf[b].resize(size);
 		files[b].read(buf[b].data(), size);
 		files[b].read(&query_ids[b], 1);
@@ -59,8 +59,10 @@ struct Join_fetcher
 	bool operator()()
 	{
 		query_id = next();
+		unaligned_from = query_last + 1;
+		query_last = query_id;
 		for (unsigned i = 0; i < buf.size(); ++i)
-			if (query_ids[i] == query_id)
+			if (query_ids[i] == query_id && query_id != Intermediate_record::finished)
 				fetch(i);
 			else
 				buf[i].clear();
@@ -68,12 +70,14 @@ struct Join_fetcher
 	}
 	static vector<Input_stream> files;
 	static vector<unsigned> query_ids;
+	static unsigned query_last;
 	vector<Binary_buffer> buf;
-	unsigned query_id;
+	unsigned query_id, unaligned_from;
 };
 
 vector<Input_stream> Join_fetcher::files;
 vector<unsigned> Join_fetcher::query_ids;
+unsigned Join_fetcher::query_last;
 
 struct Join_writer
 {
@@ -103,7 +107,7 @@ struct Join_record
 		same_subject_ = info_.subject_id == subject;
 	}
 
-	static bool push_next(unsigned block, unsigned subject, Binary_buffer::Iterator &it, vector<Join_record> &v)	
+	static bool push_next(unsigned block, unsigned subject, Binary_buffer::Iterator &it, vector<Join_record> &v)
 	{
 		if (it.good()) {
 			v.push_back(Join_record(block, subject, it));
@@ -127,7 +131,7 @@ void join_query(vector<Binary_buffer> &buf, Text_buffer &out, Statistics &statis
 
 	vector<Join_record> records;
 	vector<Binary_buffer::Iterator> it;
-	for (unsigned i = 0; i<current_ref_block; ++i) {
+	for (unsigned i = 0; i < current_ref_block; ++i) {
 		it.push_back(buf[i].begin());
 		Join_record::push_next(i, std::numeric_limits<unsigned>::max(), it.back(), records);
 	}
@@ -150,9 +154,11 @@ void join_query(vector<Binary_buffer> &buf, Text_buffer &out, Statistics &statis
 				Hsp_data hsp(next.info_, query_source_len);
 				output_format->print_match(Hsp_context(hsp,
 					query,
-					context[hsp.frame],
+					context[align_mode.check_context(hsp.frame)],
+					align_mode.query_translated ? query_source_seqs::get()[query] : context[0],
 					query_name,
-					next.info_.subject_id,
+					ref_map.check_id(next.info_.subject_id),
+					ref_map.original_id(next.info_.subject_id),
 					ref_map.name(next.info_.subject_id),
 					ref_map.length(next.info_.subject_id),
 					n_target_seq,
@@ -187,24 +193,33 @@ void join_worker(Task_queue<Text_buffer,Join_writer> *queue)
 	size_t n;
 	Text_buffer *out;
 	Statistics stat;
+	const String_set<0>& qids = query_ids::get();
 
-	while (queue->get(n, out, fetcher)) {
+	while (queue->get(n, out, fetcher) && fetcher.query_id != Intermediate_record::finished) {
 		stat.inc(Statistics::ALIGNED);
 		size_t seek_pos;
-		const char * query_name = query_ids::get()[fetcher.query_id].c_str();
+
+		const char * query_name = qids[qids.check_idx(fetcher.query_id)].c_str();
 		const sequence query_seq = align_mode.query_translated ? query_source_seqs::get()[fetcher.query_id] : query_seqs::get()[fetcher.query_id];
+
+		if (*output_format != Output_format::daa && config.report_unaligned != 0) {
+			for (unsigned i = fetcher.unaligned_from; i < fetcher.query_id; ++i) {
+				output_format->print_query_intro(i, query_ids::get()[i].c_str(), get_source_query_len(i), *out, true);
+				output_format->print_query_epilog(*out, true);
+			}
+		}
 
 		if (*output_format == Output_format::daa)
 			seek_pos = write_daa_query_record(*out, query_name, query_seq);
 		else
-			output_format->print_query_intro(fetcher.query_id, query_name, (unsigned)query_seq.length(), *out);
+			output_format->print_query_intro(fetcher.query_id, query_name, (unsigned)query_seq.length(), *out, false);
 
 		join_query(fetcher.buf, *out, stat, fetcher.query_id, query_name, (unsigned)query_seq.length());
 
 		if (*output_format == Output_format::daa)
 			finish_daa_query_record(*out, seek_pos);
 		else
-			output_format->print_query_epilog(*out);
+			output_format->print_query_epilog(*out, false);
 
 		queue->push(n);
 	}
@@ -214,14 +229,21 @@ void join_worker(Task_queue<Text_buffer,Join_writer> *queue)
 
 void join_blocks(unsigned ref_blocks, Output_stream &master_out, const vector<Temp_file> &tmp_file)
 {
+	ref_map.init_rev_map();
 	Join_fetcher::init(tmp_file);
 	Join_writer writer(master_out);
-	Task_queue<Text_buffer, Join_writer> queue(3*config.threads_, writer);
+	Task_queue<Text_buffer, Join_writer> queue(3 * config.threads_, writer);
 	Thread_pool threads;
 	for (unsigned i = 0; i < config.threads_; ++i)
 		threads.push_back(launch_thread(join_worker, &queue));
 	threads.join_all();
 	Join_fetcher::finish();
+	if (*output_format != Output_format::daa && config.report_unaligned != 0) {
+		Text_buffer out;
+		for (unsigned i = Join_fetcher::query_last + 1; i < query_ids::get().get_length(); ++i) {
+			output_format->print_query_intro(i, query_ids::get()[i].c_str(), get_source_query_len(i), out, true);
+			output_format->print_query_epilog(out, true);
+		}
+		writer(out);
+	}
 }
-
-#endif

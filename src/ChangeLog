@@ -1,3 +1,74 @@
+[0.8.36]
+- fixed a compiler error
+
+[0.8.35]
+- added a check to detect incomplete database files
+- database files will be deleted in case database building fails
+- fixed a compiler error on 32 bit systems
+
+[0.8.34]
+- fixed a compiler error
+
+[0.8.33]
+- modified option --no-self-hits to also require matching sequence titles for filtering of a self hit
+- fixed a bug that could cause a crash in the `joining output blocks` stage
+
+[0.8.32]
+- improved speed and sensitivity
+- fixed an issue that could cause too high memory usage in certain cases
+
+[0.8.31]
+- renamed option --run-len to --min-orf
+- added compositional score adjustments (option --comp-based-stats (0,1), enabled by default)
+- removed --single-domain option and replaced by --max-hsps
+- added option --no-self-hits
+
+[0.8.30]
+- slightly improved sensitivity
+- added option to report unaligned queries (--unal)
+- pairwise, XML and SAM format will report unaligned queries by default
+- added option to filter alignments by subject cover (--subject-cover)
+
+[0.8.29]
+- fixed an issue that could cause a crash when using view on incomplete DAA files
+
+[0.8.28]
+- slightly improved sensitivity
+- added support for the BLAST pairwise format (option -f 0)
+
+[0.8.27]
+- added support for gzip compressed files containing multiple gzip streams
+
+[0.8.26]
+- fixed a compiler error
+- now compiles as generic C++ code without SSE being available
+- added option to write unaligned queries to file (--un)
+
+[0.8.25]
+- fixed a bug with the qseq field in the blast tabular format
+- added qtitle and btop fields to the blast tabular format
+- fixed a bug that could cause a crash when passing a nonexistant input file
+- fixed an issue that could cause unexpectedly long runtimes in certain cases
+
+[0.8.24]
+- error messages when reading sequence files include line numbers
+
+[0.8.23]
+- added option to change the genetic code used for translation in blastx mode
+
+[0.8.22]
+- the Hit_id and Hit_accession fields are now filled for the BLAST XML format
+
+[0.8.21]
+- fixed an error of 'diamond view' when using a custom scoring matrix
+
+[0.8.20]
+- added support for customizing the BLAST tabular output format
+
+[0.8.19]
+- ungapped xdrop score and ungapped and gapped filter scores are now set in bits
+- added support for custom scoring matrices
+
 [0.8.18]
 - fixed a crash bug
 - implemented getseq command to retrieve sequences from database files

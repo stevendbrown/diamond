@@ -23,17 +23,13 @@ struct Const
 {
 
 	enum {
-		build_version = 80,
+		build_version = 98,
 		daa_version = 0,
 		seedp_bits = 10,
 		seedp = 1<<seedp_bits,
 		max_seed_weight = 32,
 		max_shapes = 16,
-		index_modes = 2,
-		min_shape_len = 10,
-		//min_shape_len = 5,
-		max_shape_len = 32,
-		seed_anchor = 8
+		max_shape_len = 32
 	};
 
 	static const char* version_string;

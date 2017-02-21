@@ -57,7 +57,7 @@ void make_db()
 	Timer total;
 	total.start();
 	task_timer timer("Opening the database file", true);
-	Compressed_istream db_file(config.input_ref_file);
+	auto_ptr<Input_stream> db_file (Compressed_istream::auto_detect(config.input_ref_file));
 	
 	Output_stream out(config.database);
 	out.typed_write(&ref_header, 1);
@@ -70,29 +70,41 @@ void make_db()
 	vector<Pos_record> pos_array;
 	FASTA_format format;
 
-	while (format.get_seq(id, seq, db_file)) {
-		if (seq.size() == 0)
-			throw std::runtime_error("File format error: sequence of length 0");
-		if (n % 100000llu == 0llu) {
-			std::stringstream ss;
-			ss << "Loading sequence data (" << n << " sequences processed)";
-			timer.go(ss.str().c_str());
+	try {
+
+		while (format.get_seq(id, seq, *db_file)) {
+			if (seq.size() == 0)
+				throw std::runtime_error("File format error: sequence of length 0 at line " + to_string(db_file->line_count));
+			if (n % 100000llu == 0llu) {
+				std::stringstream ss;
+				ss << "Loading sequence data (" << n << " sequences processed)";
+				timer.go(ss.str().c_str());
+			}
+			pos_array.push_back(Pos_record(offset, seq.size()));
+			out.write("\xff", 1);
+			out.write(seq, false);
+			out.write("\xff", 1);
+			out.write(id, false);
+			out.write("\0", 1);
+			letters += seq.size();
+			++n;
+			offset += seq.size() + id.size() + 3;
 		}
-		pos_array.push_back(Pos_record(offset, seq.size()));
-		out.write("\xff", 1);
-		out.write(seq, false);
-		out.write("\xff", 1);
-		out.write(id, false);
-		out.write("\0", 1);
-		letters += seq.size();
-		++n;
-		offset += seq.size() + id.size() + 3;
+
+	}
+	catch (std::exception &e) {
+		out.close();
+		out.remove();
+		throw e;
 	}
 
 	timer.go("Writing trailer");
 	ref_header.pos_array_offset = offset;
 	pos_array.push_back(Pos_record(offset, 0));
 	out.write(pos_array, false);
+
+	timer.go("Closing the input file");
+	db_file->close();
 	
 	timer.go("Closing the database file");
 	ref_header.letters = letters;
@@ -113,7 +125,7 @@ bool Database_file::load_seqs()
 	seek(pos_array_offset);
 	size_t letters = 0, seqs = 0, id_letters = 0;
 
-	ref_seqs::data_ = new Masked_sequence_set;
+	ref_seqs::data_ = new Sequence_set;
 	ref_ids::data_ = new String_set<0>;
 
 	Pos_record r;
@@ -170,7 +182,12 @@ void Database_file::get_seq()
 			id.push_back(c);
 		if (all || seqs.find(n) != seqs.end()) {
 			cout << '>' << id << endl;
-			cout << sequence(seq) << endl;
+			if (config.reverse) {
+				sequence(seq).print(cout, value_traits, sequence::Reversed());
+				cout << endl;
+			}
+			else
+				cout << sequence(seq) << endl;
 		}
 		seq.clear();
 		id.clear();

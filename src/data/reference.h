@@ -31,7 +31,6 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #include "../util/hash_function.h"
 #include "../basic/packed_loc.h"
 #include "sequence_set.h"
-#include "frequency_masking.h"
 #include "../util/ptr_vector.h"
 
 using std::auto_ptr;
@@ -46,12 +45,12 @@ struct invalid_database_version_exception : public std::exception
 
 struct Reference_header
 {
-	Reference_header():
-		unique_id (0x24af8a415ee186dllu),
-		build (Const::build_version),
+	Reference_header() :
+		unique_id(0x24af8a415ee186dllu),
+		build(Const::build_version),
 		db_version(current_db_version),
-		sequences (0),
-		letters (0)
+		sequences(0),
+		letters(0)
 	{ }
 	uint64_t unique_id;
 	uint32_t build, db_version;
@@ -81,6 +80,8 @@ struct Database_file : public Input_stream
 			throw Database_format_exception ();
 		if(ref_header.build < min_build_required || ref_header.db_version != Reference_header::current_db_version)
 			throw invalid_database_version_exception();
+		if (ref_header.sequences == 0)
+			throw std::runtime_error("Incomplete database file. Database building did not complete successfully.");
 #ifdef EXTRA
 		if(sequence_type(_val()) != ref_header.sequence_type)
 			throw std::runtime_error("Database has incorrect sequence type for current alignment mode.");
@@ -102,10 +103,10 @@ void make_db();
 
 struct ref_seqs
 {
-	static const Masked_sequence_set& get()
-	{ return *(const Masked_sequence_set*)data_; }
-	static Masked_sequence_set& get_nc()
-	{ return *(Masked_sequence_set*)data_; }
+	static const Sequence_set& get()
+	{ return *data_; }
+	static Sequence_set& get_nc()
+	{ return *data_; }
 	static Sequence_set *data_;
 };
 
@@ -138,13 +139,13 @@ struct Ref_map
 		const unsigned block = current_ref_block;
 		if(data_.size() < block+1) {
 			data_.resize(block+1);
-			data_[block].insert(data_[block].end(), ref_count, std::numeric_limits<unsigned>::max());
+			data_[block].insert(data_[block].end(), ref_count, std::numeric_limits<uint32_t>::max());
 		}
 	}
 	uint32_t get(unsigned block, unsigned i)
 	{
 		uint32_t n = data_[block][i];
-		if(n != std::numeric_limits<unsigned>::max())
+		if(n != std::numeric_limits<uint32_t>::max())
 			return n;
 		{
 			mtx_.lock();
@@ -169,32 +170,37 @@ struct Ref_map
 	{
 		return len_[i];
 	}
-
 	const char* name(uint32_t i) const
 	{
 		return name_[i].c_str();
 	}
-
-	/*template<typename _val>
-	void finish()
+	void init_rev_map()
 	{
-		vector<pair<unsigned,unsigned> > v;
-		for(unsigned i=0;i<data_.size();++i)
-			if(data_[i] != std::numeric_limits<unsigned>::max())
-				v.push_back(pair<unsigned,unsigned> (data_[i], i));
-		std::sort(v.begin(), v.end());
-		for(vector<pair<unsigned,unsigned> >::const_iterator i = v.begin(); i!=v.end(); ++i) {
-			const char* s = ref_ids::get()[i->second].c_str();
-			buf_ << (uint32_t)(strlen(s)+1);
-			buf_.write_c_str(s);
-			buf_ << (uint32_t)ref_seqs<_val>::get()[i->second].length();
+		rev_map_.resize(next_);
+		unsigned n = 0;
+		for (unsigned i = 0; i < data_.size(); ++i) {
+			for (unsigned j = 0; j < data_[i].size(); ++j)
+				if (data_[i][j] != std::numeric_limits<uint32_t>::max())
+					rev_map_[data_[i][j]] = n + j;
+			n += (unsigned)data_[i].size();
 		}
-	}*/
+	}
+	unsigned original_id(unsigned i) const
+	{
+		return rev_map_[i];
+	}
+	uint32_t check_id(uint32_t i) const
+	{
+		if (i >= next_)
+			throw std::runtime_error("Dictionary reference id out of bounds.");
+		return i;
+	}
 private:
 	tthread::mutex mtx_;
 	vector<vector<uint32_t> > data_;
 	vector<uint32_t> len_;
 	Ptr_vector<string> name_;
+	vector<uint32_t> rev_map_;
 	uint32_t next_;
 	friend void finish_daa(Output_stream&);
 };

@@ -22,26 +22,21 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #include <assert.h>
 #include <string.h>
 #include <sstream>
+#include <stdexcept>
 #include "const.h"
 #include "config.h"
+#include "../util/util.h"
 
 typedef char Letter;
 typedef enum { amino_acid=0, nucleotide=1 } Sequence_type;
 struct Amino_acid {};
 struct Nucleotide {};
 
-inline string to_string(unsigned val)
-{
-	std::stringstream ss;
-	ss << val;
-	return ss.str();
-}
-
 struct invalid_sequence_char_exception : public std::exception
 {
 	const std::string msg;
 	invalid_sequence_char_exception(char ch) :
-		msg(std::string("Invalid character (") + ch + ") in sequence")
+		msg(std::string("Invalid character (") + print_char(ch) + ") in sequence")
 	{ }
 	~invalid_sequence_char_exception() throw()
 	{ }
@@ -102,6 +97,12 @@ struct Align_mode
 {
 	Align_mode(unsigned mode);
 	static unsigned from_command(unsigned command);
+	unsigned check_context(unsigned i) const
+	{
+		if (i >= query_contexts)
+			throw std::runtime_error("Sequence context is out of bounds.");
+		return i;
+	}
 	enum { blastp = 2, blastx = 3, blastn = 4 };
 	Sequence_type sequence_type, input_sequence_type;
 	unsigned mode, query_contexts;
@@ -110,5 +111,6 @@ struct Align_mode
 };
 
 extern Align_mode align_mode;
+extern const double background_freq[20];
 
 #endif /* VALUE_H_ */

@@ -1,6 +1,5 @@
 /****
-Copyright (c) 2014, University of Tuebingen
-Author: Benjamin Buchfink
+Copyright (c) 2014-2016, University of Tuebingen, Benjamin Buchfink
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
@@ -23,6 +22,18 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #include <exception>
 #include "../basic/score_matrix.h"
 
+template<typename _t>
+inline bool almost_equal(_t x, _t y)
+{
+	return x == y;
+}
+
+template<>
+inline bool almost_equal<float>(float x, float y)
+{
+	return abs(x - y) < 0.001f;
+}
+
 template<typename _score>
 struct Scalar_traceback_matrix
 {
@@ -30,7 +41,7 @@ struct Scalar_traceback_matrix
 		data_ (data),
 		band_ (band)
 	{ }
-	int operator()(int col, int row) const
+	_score operator()(int col, int row) const
 	{ return data_.column(col+1)[row - (data_.center(col+1)-band_)]; }
 	bool in_band(int col, int row) const
 	{ return row >= data_.center(col+1)-band_ && row <= data_.center(col+1)+band_ && row >= 0 && col >= 0; }
@@ -51,15 +62,15 @@ template<typename _score>
 bool have_vgap(const Scalar_traceback_matrix<_score> &dp,
 		int i,
 		int j,
-		int gap_open,
-		int gap_extend,
+		_score gap_open,
+		_score gap_extend,
 		int &l)
 {
-	int score = dp(i, j);
+	_score score = dp(i, j);
 	l = 1;
 	--j;
 	while(dp.in_band(i, j)) {
-		if(score == dp(i, j) - gap_open - (l-1)*gap_extend)
+		if (almost_equal(score, dp(i, j) - gap_open - (l - 1)*gap_extend))
 			return true;
 		--j;
 		++l;
@@ -69,17 +80,17 @@ bool have_vgap(const Scalar_traceback_matrix<_score> &dp,
 
 template<typename _score>
 bool have_hgap(const Scalar_traceback_matrix<_score> &dp,
-		int i,
-		int j,
-		int gap_open,
-		int gap_extend,
-		int &l)
+	int i,
+	int j,
+	_score gap_open,
+	_score gap_extend,
+	int &l)
 {
-	int score = dp(i, j);
+	_score score = dp(i, j);
 	l = 1;
 	--i;
 	while(dp.in_band(i, j)) {
-		if(score == dp(i, j) - gap_open - (l-1)*gap_extend)
+		if (almost_equal(score, dp(i, j) - gap_open - (l - 1)*gap_extend))
 			return true;
 		--i;
 		++l;
@@ -87,16 +98,18 @@ bool have_hgap(const Scalar_traceback_matrix<_score> &dp,
 	return false;
 }
 
-template<typename _dir, typename _score>
+template<typename _dir, typename _score, typename _score_correction>
 local_match traceback(const Letter *query,
-		const Letter *subject,
-		const Growing_buffer<_score> &scores,
-		int band,
-		int gap_open,
-		int gap_extend,
-		int i,
-		int j,
-		int score)
+	const Letter *subject,
+	const Growing_buffer<_score> &scores,
+	int band,
+	_score gap_open,
+	_score gap_extend,
+	int i,
+	int j,
+	int query_anchor,
+	_score score,
+	const _score_correction &score_correction)
 {
 	if(i == -1)
 		return local_match (0);
@@ -108,23 +121,27 @@ local_match traceback(const Letter *query,
 	l.query_range.end_ = j + 1;
 	l.subject_range.begin_ = 0;
 	l.subject_range.end_ = i + 1;
-	l.score = score;
+	l.score = (unsigned)score;
 
 	int gap_len;
 
 	while(i>0 || j>0) {
-		const Letter lq = get_dir(query, j, _dir()), ls = mask_critical(get_dir(subject, i, _dir()));
-		const int match_score = score_matrix(lq, ls);
+		const Letter lq = get_dir(query, j, _dir()), ls = get_dir(subject, i, _dir());
+		_score match_score = (_score)score_matrix(lq, ls);
+		score_correction(match_score, j, query_anchor, _dir::mult);
 		//printf("i=%i j=%i score=%i subject=%c query=%c\n",i,j,dp(i, j),Value_traits<_val>::ALPHABET[ls],Value_traits<_val>::ALPHABET[lq]);
 
-		if(dp(i, j) == match_score + dp(i-1, j-1)) {		// i==0, j==0 ?
+		if (almost_equal(dp(i, j), match_score + dp(i - 1, j - 1))) { // || dp(i, j) == score_matrix(ls, lq) + dp(i - 1, j - 1)) {		// i==0, j==0 ?
 			if (lq == ls) {
 				l.transcript.push_back(op_match);
 				++l.identities;
+				++l.positives;
 			}
 			else {
 				l.transcript.push_back(op_substitution, ls);
 				++l.mismatches;
+				if (match_score > 0)
+					++l.positives;
 			}
 			--i;
 			--j;
@@ -132,11 +149,13 @@ local_match traceback(const Letter *query,
 		} else if (have_hgap(dp, i, j, gap_open, gap_extend, gap_len)) {
 			++l.gap_openings;
 			l.length += gap_len;
+			l.gaps += gap_len;
 			for (; gap_len > 0; gap_len--)
-				l.transcript.push_back(op_deletion, mask_critical(get_dir(subject, i--, _dir())));
+				l.transcript.push_back(op_deletion, get_dir(subject, i--, _dir()));
 		} else if (have_vgap(dp, i, j, gap_open, gap_extend, gap_len)) {
 			++l.gap_openings;
 			l.length += gap_len;
+			l.gaps += gap_len;
 			j -= gap_len;
 			l.transcript.push_back(op_insertion, (unsigned)gap_len);
 		} else {
@@ -144,14 +163,17 @@ local_match traceback(const Letter *query,
 		}
 	}
 
-	const Letter lq = get_dir(query, 0, _dir()), ls = mask_critical(get_dir(subject, 0, _dir()));
+	const Letter lq = get_dir(query, 0, _dir()), ls = get_dir(subject, 0, _dir());
 	if (lq == ls) {
 		l.transcript.push_back(op_match);
 		++l.identities;
+		++l.positives;
 	}
 	else {
 		l.transcript.push_back(op_substitution, ls);
 		++l.mismatches;
+		if (score_matrix(lq, ls) > 0)
+			++l.positives;
 	}
 	++l.length;
 	return l;
@@ -162,11 +184,11 @@ local_match traceback(const Letter *query,
 		const Letter *subject,
 		const Double_buffer<_score> &scores,
 		int band,
-		int gap_open,
-		int gap_extend,
+		_score gap_open,
+		_score gap_extend,
 		int i,
 		int j,
-		int score)
+		_score score)
 { return local_match (score); }
 
 #endif /* SCALAR_TRACEBACK_H_ */

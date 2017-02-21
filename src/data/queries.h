@@ -51,4 +51,13 @@ struct query_ids
 	static String_set<0> *data_;
 };
 
+extern vector<bool> query_aligned;
+
+void write_unaligned(Output_stream *file);
+
+inline unsigned get_source_query_len(unsigned query_id)
+{
+	return align_mode.query_translated ? (unsigned)query_seqs::get().reverse_translated_len(query_id*align_mode.query_contexts) : (unsigned)query_seqs::get().length(query_id);
+}
+
 #endif /* QUERIES_H_ */

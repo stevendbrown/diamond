@@ -24,9 +24,12 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #include "../align/align.h"
 #include "../align/extend_ungapped.h"
 #include "../search/sse_dist.h"
+#include "../dp/score_profile.h"
+#include "../output/output_format.h"
 
 void benchmark_cmp()
 {
+#ifdef __SSE2__
 	const size_t n = 1000000000llu;
 	__m128i r1 = _mm_set_epi8(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16);
 	const __m128i r2 = _mm_set_epi8(0, 2, 3, 0, 0, 0, 0, 8, 0, 0, 0, 0, 13, 14, 0, 16);
@@ -39,6 +42,7 @@ void benchmark_cmp()
 		x += _mm_movemask_epi8(_mm_cmpeq_epi8(r1, r2));
 	}
 	cout << "x=" << x << " t=" << t.getElapsedTimeInMicroSec() * 1000 / n << endl;
+#endif
 }
 
 int xdrop_ungapped2(const Letter *query, const Letter *subject)
@@ -48,17 +52,17 @@ int xdrop_ungapped2(const Letter *query, const Letter *subject)
 	const Letter *q(query), *s(subject);
 
 	st = score;
-	while (score - st < config.xdrop
+	while (score - st < config.raw_ungapped_xdrop
 		&& *q != '\xff'
 		&& *s != '\xff')
 	{
 		st += score_matrix(*q, *s);
-		//score = std::max(score, st);
+		score = std::max(score, st);
 		++q;
 		++s;
 
 		st += score_matrix(*q, *s);
-		//score = std::max(score, st);
+		score = std::max(score, st);
 		++q;
 		++s;
 
@@ -70,45 +74,96 @@ int xdrop_ungapped2(const Letter *query, const Letter *subject)
 	return score;
 }
 
+int xdrop_window(const Letter *query, const Letter *subject)
+{
+	static const int window = 40;
+	int score(0), st(0), n = 0;
+
+	const Letter *q(query), *s(subject);
+
+	st = score;
+	while (n < window
+		&& *q != '\xff'
+		&& *s != '\xff')
+	{
+		st += score_matrix(*q, *s);
+		//score = std::max(score, st);
+		++q;
+		++s;
+		++n;
+
+		st += score_matrix(*q, *s);
+		//score = std::max(score, st);
+		++q;
+		++s;
+		++n;
+
+		st += score_matrix(*q, *s);
+		//score = std::max(score, st);
+		++q;
+		++s;
+		++n;
+	}
+	return st;
+}
+
 void benchmark_ungapped(const Sequence_set &ss, unsigned qa, unsigned sa)
 {
-	static const unsigned n = 10000000;
+	static const size_t n = 100000000llu;
 	Timer t;
 	t.start();
 
 	const Letter *q = &ss[0][qa], *s = &ss[1][sa];
 	int score=0;
 
-	for (unsigned i = 0; i < n; ++i) {
+	uint64_t mask = 0;
+	for (unsigned i = 0; i < 64; ++i) {
+		if (q[i] == '\xff' || s[i] == '\xff')
+			break;
+		if (q[i] == s[i])
+			mask |= 1llu << i;
+	}
 
-		score += xdrop_ungapped2(q, s);
+	for (size_t i = 0; i < n; ++i) {
+
+		//score += xdrop_window(q, s);
+		//score += binary_ungapped(mask);
 
 	}
 	t.stop();
 
 	cout << score << endl;
-	cout << " n/sec=" << (double)n / t.getElapsedTimeInSec() << endl;
-	cout << "t=" << t.getElapsedTimeInMicroSec() << endl;
+	cout << "t=" << t.getElapsedTimeInMicroSec() * 1000 / n << " ns" << endl;
 }
 
 void benchmark_greedy(const Sequence_set &ss, unsigned qa, unsigned sa)
 {
-	static const unsigned n = 10000;
+	static const unsigned n = 100000;
 	vector<Diagonal_segment> d;
 	d.push_back(ungapped_extension(sa, qa, ss[0], ss[1]));
-	greedy_align(ss[0], ss[1], d[0], true);
+	Long_score_profile qp(ss[0]);
+	//greedy_align(ss[0], qp, ss[1], d[0], true);
+	//greedy_align(ss[0], qp, ss[1], qa, sa, true);
+	Hsp_data hsp;
+	greedy_align2(ss[0], qp, ss[1], d, true, hsp);
+	Text_buffer buf;
+	Pairwise_format().print_match(Hsp_context(hsp, 0, ss[0], ss[0], "", 0, 0, "", 0, 0, 0), buf);
+	buf << '\0';
+	cout << buf.get_begin();
 
 	Timer t;
 	t.start();
 
 	for (unsigned i = 0; i < n; ++i) {
 
-		greedy_align(ss[0], ss[1], d[0], false);
+		//greedy_align(ss[0], qp, ss[1], d[0], false);
+		//greedy_align(ss[0], qp, ss[1], qa, sa, false);
+		greedy_align2(ss[0], qp, ss[1], d, false, hsp);
 
 	}
 	t.stop();
 
-	cout << " n/sec=" << (double)n / t.getElapsedTimeInSec() << endl;
+	cout << " usec=" << t.getElapsedTimeInSec() / (double)n * 1000000.0 << endl;
 	cout << "t=" << t.getElapsedTimeInMicroSec() << endl;
 }
 
@@ -128,12 +183,13 @@ void benchmark_floating(const Sequence_set &ss, unsigned qa, unsigned sa)
 				hsp.subject_,
 				hsp,
 				32,
-				config.xdrop,
+				score_matrix.rawscore(config.gapped_xdrop),
 				config.gap_open + config.gap_extend,
 				config.gap_extend,
 				cell_updates,
 				hsp.query_anchor_,
 				hsp.subject_anchor,
+				No_score_correction(),
 				Score_only());
 
 		}
@@ -150,9 +206,7 @@ void benchmark_sw()
 	vector<Letter> s1, s2;
 	unsigned qa = 0, sa = 0;
 	goto aln1;	
-
-	aln1:
-
+	
 	/*
 	> d2va1a_ c.73.1.0 (A:) automated matches {Ureaplasma parvum [TaxId: 
 134821]}
@@ -169,10 +223,11 @@ Query  80  TVIGHL  85
            T+I  L
 Sbjct  76  TIINGL  81	*/
 
+
 	s1 = sequence::from_string("SLFEQLGGQAAVQAVTAQFYANIQADATVATFFNGIDMPNQTNKTAAFLCAALGGPNAWTGRNLKEVHANMGVSNAQFTTVIGHLRSALTGAGVAAALVEQTVAVAETVRGDVVTV");
 	s2 = sequence::from_string("RKQRIVIKISGACLKQNDSSIIDFIKINDLAEQIEKISKKYIVSIVLGGGNIWRGSIAKELDMDRNLADNMGMMATIINGLALENALNHLNVNTIVLSAIKCDKLVHESSANNIKKAIEKEQVMIFVAGTGFPYFTTDSCAAIRAAETESSIILMGKNGVDGVYDSDPKINPNAQFYEHITFNMALTQNLKVMDATALALCQENNINLLVFNIDKPNAIVDVLEKKNKYTIVSK");
-	qa = 24;
-	sa = 16;
+	qa = 23;
+	sa = 15;
 	goto ende;	
 
 	/*
@@ -208,6 +263,7 @@ Sbjct  76  TIINGL  81	*/
 	Sbjct  437  IDTFLMEML  445
 	*/
 
+
 	s1 = sequence::from_string("aavqelsierllemeslvadpseefqflrvgpdsnvppkfrapvsslcqignkqiaalvv\
 wardiphfsqlemedqillikgswnelllfaiawrsmeflteerdgvdgtgnrttsppql\
 mclmpgmtlhrnsalqagvgqifdrvlselslkmrtlrvdqaeyvalkaiillnpdvkgl\
@@ -222,6 +278,9 @@ TYTESSPSNSTNDPVTNICHAADKQLFTLVEWAKRIPHFSDLPLDDQVILLRAGWNELLI\
 ASFSHRSITVKDGILLGTGLHVHRSSAHSAGVGSIFNRVLTELVSKMKDMQMDKTELGCL\
 RAIVLFNPDAKGLSNSLEVEALREKVYASLETYTKQKYPDQPGRFAKLLLRLPALRSIGL\
 KCLEHLFFFKLIGDTPIDTFLMEMLEAPHQIT");
+
+	qa = 3;
+	sa = 220;
 
 	goto ende;
 
@@ -265,14 +324,38 @@ KCLEHLFFFKLIGDTPIDTFLMEMLEAPHQIT");
 
 	*/
 
+aln1:
+
+	s1 = sequence::from_string("tspmtpditgkpfvaadasndyikrevmipmrdgvklhtvivlpkgaknapivltrtpyd\
+asgrterlasphmkdllsagddvfveggyirvfqdvrgkygsegdyvmtrplrgplnpse\
+vdhatdawdtidwlvknvsesngkvgmigssyegftvvmaltnphpalkvavpespmidg\
+wmgddwfnygafrqvnfdyftgqlskrgkgagiarqghddysnflqagsagdfakaagle\
+qlpwwhkltehaaydafwqeqaldkvmartplkvptmwlqglwdqedmwgaihsyaamep\
+rdkrntlnylvmgpwrhsqvnydgsalgalnfegdtarqfrhdvlrpffdqylvdgapka\
+dtppvfiyntgenhwdrlkaw");
+
+	s2 = sequence::from_string("MVDGNYSVASNVMVPMRDGVRLAVDLYRPDADGPVPVLLVRNPYDKFDVFAWSTQSTNWL\
+EFVRDGYAVVIQDTRGLFASEGEFVPHVDDEADAEDTLSWILEQAWCDGNVGMFGVSYLG\
+VTQWQAAVSGVGGLKAIAPSMASADLYRAPWYGPGGALSVEALLGWSALIGTGLITSRSD\
+ARPEDAADFVQLAAILNDVAGAASVTPLAEQPLLGRLIPWVIDQVVDHPDNDESWQSISL\
+FERLGGLATPALITAGWYDGFVGESLRTFVAVKDNADARLVVGPWSHSNLTGRNADRKFG\
+IAATYPIQEATTMHKAFFDRHLRGETDALAGVPKVRLFVMGIDEWRDETDWPLPDTAYTP\
+FYLGGSGAANTSTGGGTLSTSISGTESADTYLYDPADPVPSLGGTLLFHNGDNGPADQRP\
+IHDRDDVLCYSTEVLTDPVEVTGTVSARLFVSSSAVDTDFTAKLVDVFPDGRAIALCDGI\
+VRMRYRETLVNPTLIEAGEIYEVAIDMLATSNVFLPGHRIMVQVSSSNFPKYDRNSNTGG\
+VIAREQLEEMCTAVNRIHRGPEHPSHIVLPIIKR");
+
+	qa = 19;
+	sa = 4;
+
 	ende:
 	ss.push_back(s1);
 	ss.push_back(s2);
 	ss.finish_reserve();
 
 	//benchmark_floating(ss, qa, sa);
-	//benchmark_greedy(ss, qa, sa);
+	benchmark_greedy(ss, qa, sa);
 	//benchmark_cmp();
-	benchmark_ungapped(ss, qa, sa);
+	//benchmark_ungapped(ss, qa, sa);
 
 }

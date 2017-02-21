@@ -2,7 +2,6 @@
 #define MATCH_FILE_H_
 
 #include <vector>
-#include "text_file.h"
 #include "blast_record.h"
 #include "../util/util.h"
 #include "../basic/reduction.h"
@@ -17,10 +16,11 @@ struct file_parse_exception : public std::runtime_error
 
 struct blast_format { };
 struct blast_tab_format { };
+struct blast_tab_format_with_rawscore {};
 
 using std::vector;
 
-void alline(const char *buffer, char *dest)
+inline void alline(const char *buffer, char *dest)
 {
 	buffer += 7;
 	const char *begin = strstr(buffer, " ") + 1;
@@ -31,15 +31,15 @@ void alline(const char *buffer, char *dest)
 	dest[end-begin] = 0;
 }
 
-bool seq_letter(char x)
+inline bool seq_letter(char x)
 {
 	return x >= 'A' && x <= 'Z';
 }
 
-int64_t match_scores[32];
-int64_t match_counts[32];
+/*int64_t match_scores[32];
+int64_t match_counts[32];*/
 
-unsigned char_match(char query, char subject, const Reduction &red)
+inline unsigned char_match(char query, char subject, const Reduction &red)
 {
 	Letter ql = query;
 	Letter sl = subject;
@@ -54,7 +54,7 @@ unsigned char_match(char query, char subject, const Reduction &red)
 		return 0;
 }
 
-void get_match(unsigned &mask, const char *queryl, const char *subjectl, bool &hit, unsigned &len, unsigned &rid, unsigned &current_len, unsigned &ungapped_len, Letter* q, Letter* s, bool &stop)
+inline void get_match(unsigned &mask, const char *queryl, const char *subjectl, bool &hit, unsigned &len, unsigned &rid, unsigned &current_len, unsigned &ungapped_len, Letter* q, Letter* s, bool &stop)
 {
 	unsigned l ((unsigned)strlen(queryl));
 	for(unsigned i=0;i<l;++i) {
@@ -75,30 +75,57 @@ void get_match(unsigned &mask, const char *queryl, const char *subjectl, bool &h
 		*(q++) = queryl[i];
 		*(s++) = subjectl[i];
 		for(unsigned j=0;j<shapes.count();++j) {
-			if(match_shape_mask(mask, shapes[j].rev_mask_) && shapes[j].is_low_freq_rev(q))
+			if(((mask & shapes[j].rev_mask_) == shapes[j].rev_mask_))
 				hit = true;
 		}
 	}
 }
 
-class match_file : public text_file
+class match_file : public Input_stream
 {
 
 public:
 
 	typedef std::vector<blast_match> mcont;
 
-	match_file(const char* fileName) : text_file(fileName), currentQueryCount(0), queryCount(0), matchCount(0)
+	match_file(const char* fileName) : Input_stream(fileName), currentQueryCount(0), queryCount(0), matchCount(0)
 	{
 		currentQuery[0] = 0;
 		currentSubject[0] = 0;
+		memset(subst_p, 0, sizeof(subst_p));
+		memset(subst_n, 0, sizeof(subst_n));
+	}
+
+	void set_subst(const char* q, const char *s)
+	{
+		while (*q) {
+			if (*q != '-' && *s != '-' && *q != *s) {
+				const Letter lq = value_traits.from_char(*q), ls = value_traits.from_char(*s);
+				if (lq < 20 && ls < 20 && lq != ls) {
+					++subst_p[(size_t)lq][(size_t)ls];
+					++subst_n[(size_t)lq];
+				}
+			}
+			++q;
+			++s;
+		}
+	}
+
+	void get_subst() const
+	{
+		for (unsigned i = 0; i < 20; ++i) {
+			cout << "{";
+			for (unsigned j = 0; j < 20; ++j)
+				cout << (double)subst_p[i][j] / subst_n[i] << ',';
+			cout << "}," << endl;
+		}
 	}
 
 	bool get(blast_match &record, const blast_format&)
 	{
 
-		enum State { begin=0, end=1, queryStart=2, subjectStart=3, matchStart=4, queryLine=5, subjectLine=6, separator=7, between=8, haveid=9 } state = begin;
-		unsigned rawScore, expect_i, id1, id2;
+		enum State { begin = 0, end = 1, queryStart = 2, subjectStart = 3, matchStart = 4, queryLine = 5, subjectLine = 6, separator = 7, between = 8, haveid = 9 } state = begin;
+		unsigned expect_i, id1, id2;
 		char queryl[128], subjectl[128];
 		Letter queryseq[4096], subjectseq[4096];
 		Letter *q = queryseq, *s = subjectseq;
@@ -109,73 +136,84 @@ public:
 		record.len = 0;
 		record.stop = false;
 
-		while(state != end && readLine(buffer)) {
+		while(state != end && (this->getline(), !this->eof())) {
 
-			//printf("%lu %u %s", lineNumber, state, buffer);
+			//printf("%lu %u %s\n", line_count, state, line.c_str());
 
-			if(!strncmp(buffer, "Query= ", 7)) {
+			if(!strncmp(line.c_str(), "Query= ", 7)) {
 				if(state == begin || state == queryStart) {
 					state = queryStart;
-					if(sscanf(buffer, "Query= %s", currentQuery) != 1)
-						throw file_parse_exception(lineNumber);
+					if(sscanf(line.c_str(), "Query= %s", currentQuery) != 1)
+						throw file_parse_exception(this->line_count);
 				} else
-					throw file_parse_exception(lineNumber);
-			} else if(buffer[0] == '>') {
+					throw file_parse_exception(this->line_count);
+			} else if(line.c_str()[0] == '>') {
 				if(state == begin || state == queryStart) {
 					state = subjectStart;
-					if(sscanf(buffer, "> %s", currentSubject) != 1)
-						throw file_parse_exception(lineNumber);
-				} else
-					throw file_parse_exception(lineNumber);
-			} else if(sscanf(buffer, " Score = %lf bits (%u),  Expect = %lf", &record.bitscore, &rawScore, &record.expect) == 3
-					|| sscanf(buffer, " Score = %lf bits (%u),  Expect(%i) = %lf", &record.bitscore, &rawScore, &expect_i, &record.expect) == 4) {
+					if(sscanf(line.c_str(), "> %s", currentSubject) != 1)
+						throw file_parse_exception(this->line_count);
+				}
+				else if (state == separator) {
+					this->putback_line();
+					state = end;
+				}
+				else
+					throw file_parse_exception(this->line_count);
+			} else if(sscanf(line.c_str(), " Score = %lf bits (%u),  Expect = %lf", &record.bitscore, &record.raw_score, &record.expect) == 3
+					|| sscanf(line.c_str(), " Score = %lf bits (%u),  Expect(%i) = %lf", &record.bitscore, &record.raw_score, &expect_i, &record.expect) == 4) {
 				if(state == subjectStart || state == begin) {
 					record.query = currentQuery;
 					record.subject = currentSubject;
 					state = matchStart;
-				} else
-					throw file_parse_exception(lineNumber);
-			} else if(sscanf(buffer, " Identities = %u/%u (%lf%%)", &id1, &id2, &record.id) == 3) {
+				}
+				else if (state == separator) {
+					this->putback_line();
+					state = end;
+				}
+				else
+					throw file_parse_exception(this->line_count);
+			} else if(sscanf(line.c_str(), " Identities = %u/%u (%lf%%)", &id1, &id2, &record.id) == 3) {
 				if(state == matchStart) {
 					state = haveid;
 				} else
-					throw file_parse_exception(lineNumber);
-			} else if(!strncmp(buffer, "Query", 5)) {
+					throw file_parse_exception(this->line_count);
+			} else if(!strncmp(line.c_str(), "Query", 5)) {
 				if(state == haveid || state == separator) {
 					state = queryLine;
-					alline(buffer, queryl);
+					alline(line.c_str(), queryl);
 				} else
-					throw file_parse_exception(lineNumber);
-			} else if(!strncmp(buffer, "Sbjct", 5)) {
+					throw file_parse_exception(this->line_count);
+			} else if(!strncmp(line.c_str(), "Sbjct", 5)) {
 				if(state == between) {
 					state = subjectLine;
-					alline(buffer, subjectl);
-					if(strlen(subjectl) != strlen(queryl))
-						throw file_parse_exception(lineNumber);
-					get_match(match_mask, queryl, subjectl, record.hit, record.len, record.rid, current_len, record.ungapped_len, q, s, record.stop);
+					alline(line.c_str(), subjectl);
+					set_subst(queryl, subjectl);
+					/*if(strlen(subjectl) != strlen(queryl))
+						throw file_parse_exception(lineNumber);*/
+					//get_match(match_mask, queryl, subjectl, record.hit, record.len, record.rid, current_len, record.ungapped_len, q, s, record.stop);
 				} else
-					throw file_parse_exception(lineNumber);
-			} else if(state == queryLine && buffer[0] == ' ') {
+					throw file_parse_exception(this->line_count);
+			} else if(state == queryLine && line.c_str()[0] == ' ') {
 				state = between;
-			} else if((state == subjectLine || state == separator) && buffer[0] == 10) {
+			} else if((state == subjectLine || state == separator) && line.empty()) {
 				//printf("%i\n",(int)buffer[0]);
 				if(state == subjectLine)
 					state = separator;
 				else if(state == separator)
 					state = end;
 				else
-					throw file_parse_exception(lineNumber);
+					throw file_parse_exception(this->line_count);
 			} else {
 				if(state != begin && state != queryStart && state != haveid && state != subjectStart)
-					throw file_parse_exception(lineNumber);
+					throw file_parse_exception(this->line_count);
 			}
 
 		}
 
-		if(feof(file))
+		if(this->eof())
 			return false;
 		if(state != end)
-			throw file_parse_exception(lineNumber);
+			throw file_parse_exception(this->line_count);
 		++currentQueryCount;
 		++matchCount;
 		return true;
@@ -185,15 +223,14 @@ public:
 	bool get(blast_match &match, const blast_tab_format&)
 	{
 		char query[nameBufferSize], s2[nameBufferSize];
-		char query2[64];
 		double f1;
 		unsigned long long i1,i2,i3,i4,i5,i6,i7;
-
-		if(readLine(buffer)) {
-			while(buffer[0] == '#')
-				readLine(buffer);
-			if(sscanf(buffer, "%s%s%lf%llu%llu%llu%llu%llu%llu%llu%lf%lf", query, s2, &f1, &i1, &i2, &i3, &i4, &i5, &i6, &i7, &match.expect, &match.bitscore) == 12
-				|| sscanf(buffer, "%s%s%s%lf%llu%llu%llu%llu%llu%llu%llu%lf%lf", query, query2, s2, &f1, &i1, &i2, &i3, &i4, &i5, &i6, &i7, &match.expect, &match.bitscore) == 13) {
+		this->getline();
+		if(!this->eof()) {
+			while (this->line[0] == '#')
+				this->getline();
+			if(sscanf(line.c_str(), "%s%s%lf%llu%llu%llu%llu%llu%llu%llu%lf%lf", query, s2, &f1, &i1, &i2, &i3, &i4, &i5, &i6, &i7, &match.expect, &match.bitscore) == 12) {
+				//|| sscanf(line.c_str(), "%s%s%s%lf%llu%llu%llu%llu%llu%llu%llu%lf%lf", query, query2, s2, &f1, &i1, &i2, &i3, &i4, &i5, &i6, &i7, &match.expect, &match.bitscore) == 13) {
 				/*++matchCount;
 				if(!strcmp(query, currentQuery)) {
 					++currentQueryCount;
@@ -206,19 +243,51 @@ public:
 				match.subject = s2;
 				return true;
 			} else {
-				printf("%s\n", buffer);
-				throw file_parse_exception(lineNumber);
+				printf("%s\n", line.c_str());
+				throw file_parse_exception(this->line_count);
 			}
 		} else {
-			if(!text_file::at_end())
-				throw file_parse_exception(lineNumber);
+			match.set_empty();
+			return false;
+		}
+	}
+
+	bool get(blast_match &match, const blast_tab_format_with_rawscore&)
+	{
+		char query[nameBufferSize], s2[nameBufferSize];
+		double f1;
+		unsigned long long i1, i2, i3, i4, i5, i6, i7;
+		this->getline();
+		if (!this->eof()) {
+			while (this->line[0] == '#')
+				this->getline();
+			if (sscanf(line.c_str(), "%s%s%lf%llu%llu%llu%llu%llu%llu%llu%lf%lf%u", query, s2, &f1, &i1, &i2, &i3, &i4, &i5, &i6, &i7, &match.expect, &match.bitscore, &match.raw_score) == 13) {
+				//|| sscanf(line.c_str(), "%s%s%s%lf%llu%llu%llu%llu%llu%llu%llu%lf%lf", query, query2, s2, &f1, &i1, &i2, &i3, &i4, &i5, &i6, &i7, &match.expect, &match.bitscore) == 13) {
+				/*++matchCount;
+				if(!strcmp(query, currentQuery)) {
+				++currentQueryCount;
+				} else {
+				++queryCount;
+				currentQueryCount = 1;
+				strcpy(currentQuery, query);
+				}*/
+				match.query = query;
+				match.subject = s2;
+				return true;
+			}
+			else {
+				printf("%s\n", line.c_str());
+				throw file_parse_exception(this->line_count);
+			}
+		}
+		else {
 			match.set_empty();
 			return false;
 		}
 	}
 
 	template<typename _format>
-	void get_read(mcont &v, const _format& format)
+	bool get_read(mcont &v, const _format& format)
 	{
 		unsigned n = 0;
 		v.clear();
@@ -229,7 +298,7 @@ public:
 			save.set_empty();
 		} else {
 			if(!get(match, format))
-				return;
+				return false;
 			match.n = n++;
 			v.push_back(match);
 		}
@@ -242,7 +311,7 @@ public:
 		}
 		if(!match.empty() && match.query != v[0].query)
 			save = match;
-		return;
+		return !v.empty();
 	}
 
 	unsigned getTotalQueries() const
@@ -258,8 +327,10 @@ public:
 protected:
 	static const size_t nameBufferSize = 4096;
 	unsigned currentQueryCount, queryCount, matchCount;
-	char buffer[readBufferSize], currentQuery[nameBufferSize], currentSubject[nameBufferSize];
+	char currentQuery[nameBufferSize], currentSubject[nameBufferSize];
 	blast_match save;
+	size_t subst_p[20][20];
+	size_t subst_n[20];
 
 };
 

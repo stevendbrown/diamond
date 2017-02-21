@@ -28,27 +28,6 @@ LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR P
 #include "../util/util.h"
 #include "config.h"
 
-const double background_freq[] = {-1.188861,
-		-4.343446,
-		-2.648093,
-		-3.806941,
-		-3.742636,
-		-3.221182,
-		-3.498273,
-		-1.498637,
-		-4.339607,
-		-3.027002,
-		-1.557546 };
-
-inline bool use_seed_freq()
-{
-#ifdef FREQUENCY_MASKING
-	return true;
-#else
-	return false;
-#endif
-}
-
 /*struct All_partitions {};
 struct Filter_partition {};
 
@@ -63,6 +42,47 @@ bool include_partition<Filter_partition>(unsigned p)
 {
 	return current_range.contains(p);
 }*/
+
+
+struct Letter_trail
+{
+	Letter_trail()
+	{
+		bucket[0] = 0;
+		for (int i = 1; i < 20; ++i)
+			bucket[i] = -1;
+	}
+	Letter_trail(const Reduction &reduction)
+	{
+		for (int i = 0; i < 20; ++i)
+			bucket[i] = reduction(i);
+	}
+	int operator()(char l) const
+	{
+		return bucket[(long)l];
+	}
+	int next() const
+	{
+		for (int i = 0; i < 20; ++i)
+			if (bucket[i] == -1)
+				return i;
+		return -1;
+	}
+	int buckets() const
+	{
+		int m = 0;
+		for (int i = 0; i < 20; ++i)
+			m = std::max(m, bucket[i]);
+		return m + 1;
+	}
+	double background_p() const;
+	double foreground_p(double id) const;
+	friend std::ostream& operator<<(std::ostream &s, const Letter_trail &t);
+	int bucket[20];
+};
+
+#define OPT_W 7
+typedef Letter_trail Trail[OPT_W];
 
 struct shape
 {
@@ -108,9 +128,8 @@ struct shape
 #endif
 		for(unsigned i=0;i<weight_;++i) {
 			Letter l = seq[positions_[i]];
-			if(l == value_traits.mask_char || l == '\xff')
+			if (l == value_traits.mask_char || l == '\xff')
 				return false;
-			l = mask_critical(l);
 			unsigned r = Reduction::reduction(l);
 #ifdef FREQUENCY_MASKING
 			f += background_freq[r];
@@ -127,66 +146,53 @@ struct shape
 	inline bool set_seed_reduced(Packed_seed &s, const Letter *seq) const
 	{
 		s = 0;
-#ifdef FREQUENCY_MASKING
-		double f = 0;
-#endif
 		for (unsigned i = 0; i < weight_; ++i) {
 			Letter l = seq[positions_[i]];
 			if (l == value_traits.mask_char)
 				return false;
-#ifdef FREQUENCY_MASKING
-			f += background_freq[(long)l];
-#endif
 			s *= Reduction::reduction.size();
 			s += uint64_t(l);
 		}
-#ifdef FREQUENCY_MASKING
-		if (use_seed_freq() && f > config.max_seed_freq) return false;
-#endif
 		return true;
 	}
 
-	inline bool	is_low_freq(const Letter *seq) const
+	inline bool set_seed(Seed &s, const Letter *seq) const
 	{
-#ifdef FREQUENCY_MASKING
-		double f = 0;
-		for(unsigned i=0;i<weight_;++i) {
+		for (unsigned i = 0; i < weight_; ++i) {
 			Letter l = seq[positions_[i]];
-			if(l == value_traits.mask_char || l == '\xff')
+			if (l >= 20)
 				return false;
-			l = mask_critical(l);
-			unsigned r = Reduction::reduction(l);
-			f += background_freq[r];
+			s[i] = l;
 		}
-		return !use_seed_freq() || f <= config.max_seed_freq;
-#else
 		return true;
-#endif
 	}
-
-	inline bool	is_low_freq_rev(const Letter *seq) const
-	{
-#ifdef FREQUENCY_MASKING
-		double f = 0;
-		for(unsigned i=0;i<weight_;++i) {
-			Letter l = seq[(int)positions_[i]-(int)length_];
-			if(l == value_traits.mask_char || l == '\xff')
-				return false;
-			l = mask_critical(l);
-			unsigned r = Reduction::reduction(l);
-			f += background_freq[r];
-		}
-		return !use_seed_freq() || f <= config.max_seed_freq;
-#else
-		return true;
-#endif
-	}
-
+	
 	friend std::ostream& operator<<(std::ostream&s, const shape &sh)
 	{
 		for (unsigned i = 0; i < sh.length_; ++i)
 			s << ((sh.mask_ & (1 << i)) ? '1' : '0');
 		return s;
+	}
+
+	int score(const Letter *x, const Letter *y) const
+	{
+		int score = 0;
+		for (unsigned i = 0; i < weight_; ++i)
+			score += score_matrix(x[positions_[i]], y[positions_[i]]);
+		return score;
+	}
+
+	bool hit(const Letter *x, const Letter *y, const Trail &trail) const
+	{
+		for (unsigned i = 0; i < weight_; ++i)
+#if OPT_W==1
+			if (trail[0](x[positions_[i]]) != trail[0](y[positions_[i]]))
+				return false;
+#else
+			if (trail[i](x[positions_[i]]) != trail[i](y[positions_[i]]))
+				return false;
+#endif
+		return true;
 	}
 
 	uint32_t length_, weight_, positions_[Const::max_seed_weight], d_, mask_, rev_mask_, id_;

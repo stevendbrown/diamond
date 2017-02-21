@@ -34,104 +34,81 @@ inline char convert_char<Sequence_data>(char a)
 }
 
 template<typename _t, typename _what>
-void copy_line(Compressed_istream & s, vector<_t>& v, _what)
+void copy_line(const string & s, vector<_t>& v, size_t d, _what)
 {
-	char a = 0;
-	while (s.read(&a, 1) == 1 && a != '\n' && a != '\r')
-		v.push_back(convert_char<_what>(a));
-	if (a == '\r')
-		if (s.read(&a, 1) != 1 || a != '\n')
-			throw file_format_exception();
+	for (string::const_iterator i = s.begin() + d; i != s.end(); ++i)
+		v.push_back(convert_char<_what>(*i));
 }
 
-void skip_line(Compressed_istream &s)
+bool FASTA_format::get_seq(vector<char>& id, vector<Letter>& seq, Input_stream & s) const
 {
-	char a = 0;
-	while (s.read(&a, 1) == 1 && a != '\n' && a != '\r');
-	if (a == '\r')
-		if (s.read(&a, 1) != 1 || a != '\n')
-			throw file_format_exception();
-}
-
-void copy_until(Compressed_istream &s, int delimiter, vector<Letter> &v)
-{
-	char a = 0;
-	size_t col = 0;
-	while (s.read(&a, 1) == 1 && a != delimiter) {
-		switch (a) {
-		case '\n':
-			col = 0;
-		case '\r':
+	while (s.getline(), s.line.empty() && !s.eof());
+	if (s.eof())
+		return false;
+	if (s.line[0] != '>')
+		throw Stream_read_exception(s.line_count, "FASTA format error: Missing '>' at record start.");
+	id.clear();
+	seq.clear();
+	copy_line(s.line, id, 1, Raw_text());
+	while (true) {
+		s.getline();
+		if (s.line.empty()) {
+			if (s.eof())
+				break;
+			else
+				continue;
+		}
+		if (s.line[0] == '>') {
+			s.putback_line();
 			break;
-		default:
-			v.push_back(input_value_traits.from_char(a));
-			++col;
+		}
+		try {
+			copy_line(s.line, seq, 0, Sequence_data());
+		}
+		catch (invalid_sequence_char_exception &e) {
+			throw Stream_read_exception(s.line_count, e.what());
 		}
 	}
-	if (a == delimiter) {
-		if (col > 0)
-			throw file_format_exception();
-		else
-			s.putback(a);
+	return true;
+}
+
+bool FASTQ_format::get_seq(vector<char>& id, vector<Letter>& seq, Input_stream & s) const
+{
+	while (s.getline(), s.line.empty() && !s.eof());
+	if (s.eof())
+		return false;
+	if (s.line[0] != '@')
+		throw Stream_read_exception(s.line_count, "FASTQ format error: Missing '@' at record start.");
+	id.clear();
+	seq.clear();
+	copy_line(s.line, id, 1, Raw_text());
+	s.getline();
+	try {
+		copy_line(s.line, seq, 0, Sequence_data());
 	}
-}
-
-void skip_char(Compressed_istream &s, char c)
-{
-	char a;
-	if (s.read(&a, 1) != 1 || a != c)
-		throw file_format_exception();
-}
-
-bool have_char(Compressed_istream &s, char c)
-{
-	char a;
-	if (s.read(&a, 1) == 0)
-		return false;
-	else if (a != c)
-		throw file_format_exception();
-	else
-		return true;
-}
-
-bool FASTA_format::get_seq(vector<char>& id, vector<Letter>& seq, Compressed_istream & s) const
-{
-	if (!have_char(s, '>'))
-		return false;
-	id.clear();
-	seq.clear();
-	copy_line(s, id, Raw_text());
-	copy_until(s, '>', seq);
+	catch (invalid_sequence_char_exception &e) {
+		throw Stream_read_exception(s.line_count, e.what());
+	}
+	s.getline();
+	if (s.line.empty() || s.line[0] != '+')
+		throw Stream_read_exception(s.line_count, "FASTQ format error: Missing '+' line in record.");
+	s.getline();
 	return true;
 }
 
-bool FASTQ_format::get_seq(vector<char>& id, vector<Letter>& seq, Compressed_istream & s) const
-{
-	if (!have_char(s, '@'))
-		return false;
-	id.clear();
-	seq.clear();
-	copy_line(s, id, Raw_text());
-	copy_line(s, seq, Sequence_data());
-	skip_char(s, '+');
-	skip_line(s);
-	skip_line(s);
-	return true;
-}
-
-const Sequence_file_format * guess_format(const string & file)
+const Sequence_file_format * guess_format(Input_stream &file)
 {
 	static const FASTA_format fasta;
 	static const FASTQ_format fastq;
 
-	Compressed_istream f(file);
-	char c;
-	if (f.read(&c, 1) != 1)
-		throw file_format_exception();
-	switch (c) {
+	file.getline();
+	file.putback_line();
+	if (file.line.empty())
+		throw std::runtime_error("Error detecting input file format. First line seems to be blank.");
+	switch (file.line[0]) {
 	case '>': return &fasta;
 	case '@': return &fastq;
-	default: throw file_format_exception();
+	default: throw std::runtime_error("Error detecting input file format. First line must begin with '>' (FASTA) or '@' (FASTQ).");
 	}
 	return 0;
 }

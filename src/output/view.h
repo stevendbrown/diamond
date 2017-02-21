@@ -75,13 +75,13 @@ struct View_fetcher
 
 void view_query(DAA_query_record &r, Text_buffer &out, const Output_format &format)
 {
-	format.print_query_intro(r.query_num, r.query_name.c_str(), (unsigned)r.query_len(), out);
+	format.print_query_intro(r.query_num, r.query_name.c_str(), (unsigned)r.query_len(), out, false);
 	for (DAA_query_record::Match_iterator i = r.begin(); i.good(); ++i) {
 		if (i->frame > 2 && config.forwardonly)
 			continue;
 		format.print_match(i->context(), out);
 	}
-	format.print_query_epilog(out);
+	format.print_query_epilog(out, false);
 }
 
 struct View_context
@@ -119,11 +119,7 @@ struct View_context
 void view()
 {
 	DAA_file daa (config.daa_file);
-	score_matrix = Score_matrix(to_upper_case(daa.score_matrix()),
-		daa.gap_open_penalty(),
-		daa.gap_extension_penalty(),
-		daa.match_reward(),
-		daa.mismatch_penalty());
+	score_matrix = Score_matrix("", daa.lambda(), daa.kappa(), daa.gap_open_penalty(), daa.gap_extension_penalty());
 
 	message_stream << "Scoring parameters: " << score_matrix << endl;
 	verbose_stream << "Build version = " << daa.diamond_build() << endl;
@@ -133,21 +129,21 @@ void view()
 	
 	task_timer timer("Generating output");
 	View_writer writer;
-	const Output_format& format(get_output_format());
+	output_format = auto_ptr<Output_format>(get_output_format());
 
 	Binary_buffer buf;
 	size_t query_num;
 	daa.read_query_buffer(buf, query_num);
 	DAA_query_record r(daa, buf, query_num);
 	Text_buffer out;
-	view_query(r, out, format);
+	view_query(r, out, *output_format);
 	
-	format.print_header(*writer.f_, daa.mode(), daa.score_matrix(), daa.gap_open_penalty(), daa.gap_extension_penalty(), daa.evalue(), r.query_name.c_str(), (unsigned)r.query_len());
+	output_format->print_header(*writer.f_, daa.mode(), daa.score_matrix(), daa.gap_open_penalty(), daa.gap_extension_penalty(), daa.evalue(), r.query_name.c_str(), (unsigned)r.query_len());
 	writer(out);
 
-	View_context context(daa, writer, format);
+	View_context context(daa, writer, *output_format);
 	launch_thread_pool(context, config.threads_);
-	format.print_footer(*writer.f_);
+	output_format->print_footer(*writer.f_);
 }
 
 #endif /* VIEW_H_ */
